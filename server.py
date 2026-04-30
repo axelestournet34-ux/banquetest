@@ -22,10 +22,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-PORT       = int(os.getenv("PORT", 8000))
-ST_PORT    = 8501
-ST_HTTP    = f"http://127.0.0.1:{ST_PORT}"
-ST_WS      = f"ws://127.0.0.1:{ST_PORT}"
+PORT    = int(os.getenv("PORT", 8000))
+ST_PORT = 8501
+ST_HTTP = f"http://127.0.0.1:{ST_PORT}"
+ST_WS   = f"ws://127.0.0.1:{ST_PORT}"
+
 WEBHOOK_TOKEN      = os.getenv("WEBHOOK_TOKEN", "mon-budget-secret")
 CATEGORIES_DEFAULT = "📦 Autres"
 
@@ -125,47 +126,39 @@ def _parse_revolut(text: str):
     return None, None
 
 
-# ── Proxy HTTP → Streamlit ────────────────────────────────────────────────────
-_SKIP_HEADERS = {"host", "transfer-encoding", "content-encoding", "content-length"}
-
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
-async def proxy_http(request: Request, path: str = ""):
-    url = f"{ST_HTTP}/{path}"
-    qs  = request.url.query
-    if qs:
-        url += f"?{qs}"
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in _SKIP_HEADERS}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            rp = await client.request(
-                method=request.method, url=url,
-                headers=headers, content=await request.body(),
-                follow_redirects=True,
-            )
-            out_headers = {k: v for k, v in rp.headers.items() if k.lower() not in _SKIP_HEADERS}
-            return Response(content=rp.content, status_code=rp.status_code, headers=out_headers)
-        except httpx.ConnectError:
-            return Response(content=b"Streamlit is starting, please wait...", status_code=503)
-
-
 # ── Proxy WebSocket → Streamlit ───────────────────────────────────────────────
 @app.websocket("/{path:path}")
 async def proxy_ws(websocket: WebSocket, path: str = ""):
-    await websocket.accept()
+    # Transmettre les sous-protocoles demandés par le navigateur (ex: "streamlit")
+    proto_header = websocket.headers.get("sec-websocket-protocol", "")
+    subprotocols = [s.strip() for s in proto_header.split(",") if s.strip()]
+
+    if subprotocols:
+        await websocket.accept(subprotocol=subprotocols[0])
+    else:
+        await websocket.accept()
+
     qs     = websocket.url.query
     ws_url = f"{ST_WS}/{path}" + (f"?{qs}" if qs else "")
+
     try:
-        async with websockets.connect(ws_url) as upstream:
+        async with websockets.connect(
+            ws_url,
+            subprotocols=subprotocols or None,
+            ping_interval=20,
+            ping_timeout=20,
+        ) as upstream:
             async def c2u():
                 try:
                     while True:
                         msg = await websocket.receive()
-                        if "bytes" in msg and msg["bytes"]:
+                        if msg.get("bytes"):
                             await upstream.send(msg["bytes"])
-                        elif "text" in msg and msg["text"]:
+                        elif msg.get("text"):
                             await upstream.send(msg["text"])
                 except Exception:
                     pass
+
             async def u2c():
                 try:
                     async for msg in upstream:
@@ -175,12 +168,41 @@ async def proxy_ws(websocket: WebSocket, path: str = ""):
                             await websocket.send_text(msg)
                 except Exception:
                     pass
+
             await asyncio.gather(c2u(), u2c())
     except Exception:
         try:
             await websocket.close()
         except Exception:
             pass
+
+
+# ── Proxy HTTP → Streamlit ────────────────────────────────────────────────────
+_SKIP = {"host", "transfer-encoding", "content-encoding", "content-length"}
+
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
+async def proxy_http(request: Request, path: str = ""):
+    url = f"{ST_HTTP}/{path}"
+    qs  = request.url.query
+    if qs:
+        url += f"?{qs}"
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _SKIP}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            rp = await client.request(
+                method=request.method, url=url,
+                headers=headers, content=await request.body(),
+                follow_redirects=True,
+            )
+            out_headers = {k: v for k, v in rp.headers.items() if k.lower() not in _SKIP}
+            return Response(content=rp.content, status_code=rp.status_code, headers=out_headers)
+        except httpx.ConnectError:
+            return Response(
+                content=b"<html><body><p>Demarrage en cours, rechargez dans 10 secondes...</p>"
+                        b"<script>setTimeout(()=>location.reload(),8000)</script></body></html>",
+                status_code=503,
+                media_type="text/html",
+            )
 
 
 # ── Démarrage Streamlit ───────────────────────────────────────────────────────
@@ -194,15 +216,8 @@ async def startup():
         "--server.enableCORS", "false",
         "--server.enableXsrfProtection", "false",
     ]
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # Attendre que Streamlit soit prêt (max 30 s)
-    async with httpx.AsyncClient() as client:
-        for _ in range(30):
-            try:
-                await client.get(f"{ST_HTTP}/_stcore/health", timeout=2)
-                return
-            except Exception:
-                await asyncio.sleep(1)
+    subprocess.Popen(cmd)
+    print(f"[server] Streamlit lancé sur le port {ST_PORT}")
 
 
 if __name__ == "__main__":
