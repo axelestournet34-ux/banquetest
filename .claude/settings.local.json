@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"c:/Users/axele/Desktop/test/.venv/Scripts/streamlit.exe\" run *)",
+      "PowerShell(Start-Process -FilePath \"c:\\\\Users\\\\axele\\\\Desktop\\\\test\\\\.venv\\\\Scripts\\\\streamlit.exe\" -ArgumentList \"run\",\"c:\\\\Users\\\\axele\\\\Desktop\\\\test\\\\app.py\" -NoNewWindow)"
+    ]
+  }
+}

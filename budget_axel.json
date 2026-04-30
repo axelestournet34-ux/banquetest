@@ -1,0 +1,23 @@
+{
+  "2026-04": {
+    "config": {
+      "monthly_budget": 900.0,
+      "days_in_month": 30,
+      "current_day": 30
+    },
+    "category_budgets": {
+      "🍔 Alimentation": 0.0,
+      "🚗 Transport": 0.0,
+      "🏠 Logement / Factures": 0.0,
+      "💊 Santé": 0.0,
+      "🎮 Loisirs": 0.0,
+      "👗 Vêtements": 0.0,
+      "📱 Abonnements": 0.0,
+      "🍽️ Restaurant": 0.0,
+      "✈️ Voyage": 0.0,
+      "🎁 Cadeaux": 0.0,
+      "📦 Autres": 0.0
+    },
+    "expenses": []
+  }
+}
