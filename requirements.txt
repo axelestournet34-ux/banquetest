@@ -6,5 +6,4 @@ uvicorn[standard]
 pydantic
 httpx
 websockets
-extra-streamlit-components
 redis

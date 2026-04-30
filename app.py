@@ -8,15 +8,14 @@ import hashlib
 import json
 import os
 import time
-import extra_streamlit_components as stx
 import redis
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
-COOKIE_NAME = "budget_session"
+SESSION_KEY = "budget_session"
 
 @st.cache_resource
 def _redis():
@@ -93,10 +92,9 @@ def render_auth_page() -> None:
                     uname = username.strip().lower()
                     st.session_state.logged_in = True
                     st.session_state.username = uname
-                    stx.CookieManager().set(
-                        COOKIE_NAME, uname,
-                        expires_at=datetime.now() + timedelta(days=365),
-                    )
+                    token = hashlib.sha256(f"{uname}{time.time()}".encode()).hexdigest()[:16]
+                    _redis().setex(f"session:{token}", 60 * 60 * 24 * 365, uname)
+                    st.query_params[SESSION_KEY] = token
                     st.rerun()
                 else:
                     st.error("Nom d'utilisateur ou mot de passe incorrect.")
@@ -201,14 +199,15 @@ def _data_mtime() -> float:
     return float(val) if val else 0.0
 
 def init_state() -> None:
-    cm = stx.CookieManager()
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.username = ""
-        saved = cm.get(COOKIE_NAME)
-        if saved and saved in load_users():
-            st.session_state.logged_in = True
-            st.session_state.username = saved
+        token = st.query_params.get(SESSION_KEY)
+        if token:
+            saved = _redis().get(f"session:{token}")
+            if saved and saved in load_users():
+                st.session_state.logged_in = True
+                st.session_state.username = saved
     if not st.session_state.logged_in:
         return
     if "data" not in st.session_state:
@@ -298,7 +297,10 @@ def render_sidebar() -> None:
     st.sidebar.title("💶 Budget Mensuel v4")
     st.sidebar.markdown(f"👤 **{st.session_state.username}**")
     if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
-        stx.CookieManager().delete(COOKIE_NAME)
+        token = st.query_params.get(SESSION_KEY)
+        if token:
+            _redis().delete(f"session:{token}")
+            st.query_params.clear()
         for key in ["logged_in", "username", "data", "active_month"]:
             st.session_state.pop(key, None)
         st.rerun()
