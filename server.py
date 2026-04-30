@@ -35,8 +35,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 
 # ── Helpers fichiers ──────────────────────────────────────────────────────────
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 def _data_file(username: str) -> Path:
-    return Path(f"budget_{username}.json")
+    return DATA_DIR / f"budget_{username}.json"
 
 def _load(username: str) -> dict:
     f = _data_file(username)

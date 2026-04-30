@@ -6,15 +6,21 @@ Prévision · Tendances · Filtres · Export CSV
 
 import hashlib
 import json
+import extra_streamlit_components as stx
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+COOKIE_NAME = "budget_session"
 
-USERS_FILE = Path("users.json")
+
+import os
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+USERS_FILE = DATA_DIR / "users.json"
 
 CATEGORIES = [
     "🍔 Alimentation", "🚗 Transport", "🏠 Logement / Factures",
@@ -28,7 +34,7 @@ MOIS_FR = [
 ]
 
 def data_file_for(username: str) -> Path:
-    return Path(f"budget_{username}.json")
+    return DATA_DIR / f"budget_{username}.json"
 DATE_FORMATS = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y"]
 
 CURRENCIES = {
@@ -89,8 +95,13 @@ def render_auth_page() -> None:
             password = st.text_input("Mot de passe", type="password")
             if st.form_submit_button("Connexion", use_container_width=True, type="primary"):
                 if verify_user(username, password):
+                    uname = username.strip().lower()
                     st.session_state.logged_in = True
-                    st.session_state.username = username.strip().lower()
+                    st.session_state.username = uname
+                    stx.CookieManager().set(
+                        COOKIE_NAME, uname,
+                        expires_at=datetime.now() + timedelta(days=365),
+                    )
                     st.rerun()
                 else:
                     st.error("Nom d'utilisateur ou mot de passe incorrect.")
@@ -198,9 +209,14 @@ def _data_mtime() -> float:
     return f.stat().st_mtime if f.exists() else 0.0
 
 def init_state() -> None:
+    cm = stx.CookieManager()
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.username = ""
+        saved = cm.get(COOKIE_NAME)
+        if saved and saved in load_users():
+            st.session_state.logged_in = True
+            st.session_state.username = saved
     if not st.session_state.logged_in:
         return
     if "data" not in st.session_state:
@@ -290,6 +306,7 @@ def render_sidebar() -> None:
     st.sidebar.title("💶 Budget Mensuel v4")
     st.sidebar.markdown(f"👤 **{st.session_state.username}**")
     if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
+        stx.CookieManager().delete(COOKIE_NAME)
         for key in ["logged_in", "username", "data", "active_month"]:
             st.session_state.pop(key, None)
         st.rerun()
@@ -416,12 +433,13 @@ def _render_recurring_sidebar() -> None:
 # ── Ajout rapide ──────────────────────────────────────────────────────────────
 def render_quick_add() -> None:
     st.markdown("**⚡ Ajout rapide**")
-    c1, c2, c3, c4 = st.columns([3, 1.2, 2.5, 1])
-    desc = c1.text_input("Desc", placeholder="courses, essence…", label_visibility="collapsed", key="qa_desc")
-    amt = c2.number_input("€", min_value=0.01, value=10.0, step=1.0,
-                          label_visibility="collapsed", key="qa_amt", format="%.2f")
-    cat = c3.selectbox("Cat", CATEGORIES, label_visibility="collapsed", key="qa_cat")
-    if c4.button("➕", use_container_width=True, key="qa_btn"):
+    c1, c2 = st.columns([3, 1])
+    desc = c1.text_input("Description", placeholder="courses, essence…", label_visibility="collapsed", key="qa_desc")
+    amt  = c2.number_input("€", min_value=0.01, value=10.0, step=1.0,
+                           label_visibility="collapsed", key="qa_amt", format="%.2f")
+    c3, c4 = st.columns([3, 1])
+    cat = c3.selectbox("Catégorie", CATEGORIES, label_visibility="collapsed", key="qa_cat")
+    if c4.button("➕ Ajouter", use_container_width=True, key="qa_btn"):
         active_expenses().append({
             "date": date.today().isoformat(),
             "amount": float(amt),
@@ -504,11 +522,12 @@ def render_csv_import() -> None:
 # ── Métriques ─────────────────────────────────────────────────────────────────
 def render_metrics(summary: dict) -> None:
     sym = CURRENCY_SYMBOLS.get(get_currency(), "€")
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("💰 Budget", fmt(summary["budget"]))
     c2.metric("💸 Dépensé", fmt(summary["total_spent"]))
     c3.metric("🏦 Restant", fmt(summary["budget_remaining"]))
     c4.metric("📅 Jours restants", f"{summary['days_remaining']} j")
+    c5, c6, c7 = st.columns(3)
     c5.metric(f"📊 {sym}/j initial", fmt(summary["initial_daily"]))
     c6.metric(
         f"🎯 {sym}/j recalculé",
@@ -797,6 +816,13 @@ def main() -> None:
     .card-label { text-align:center; color:#6c757d; font-size:.85rem; margin:0; }
     .budget-card { background:#f8f9fa; border-radius:14px; padding:1.5rem 1rem; margin:.5rem 0 1rem 0; }
     .cat-pill { padding:.35rem .8rem; border-radius:8px; margin:.2rem 0; font-size:.88rem; }
+    @media (max-width: 640px) {
+        .big-daily { font-size:2.2rem; }
+        div[data-testid="stMetric"] { padding:.3rem .2rem; }
+        div[data-testid="stMetricValue"] { font-size:1rem !important; }
+        div[data-testid="stMetricLabel"] { font-size:.7rem !important; }
+        section[data-testid="stSidebar"] { width:85vw !important; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -813,34 +839,32 @@ def main() -> None:
     render_metrics(summary)
     st.markdown("---")
 
-    col_form, col_status = st.columns([1, 1], gap="large")
-    with col_form:
-        render_expense_form()
-        render_csv_import()
-    with col_status:
-        if df.empty:
-            st.subheader("📊 État du budget")
-            st.info("Ajoutez vos premières dépenses pour voir l'état de votre budget en temps réel.")
-            cfg = active_config()
-            st.markdown(f"""
-            <div class="budget-card">
-                <p class="card-label">Budget quotidien de départ</p>
-                <p class="big-daily" style="color:#28a745;">{fmt(summary['initial_daily'])}</p>
-                <p class="card-label">sur {cfg['days_in_month']} jours</p>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            render_status_card(summary, df)
+    if df.empty:
+        st.subheader("📊 État du budget")
+        st.info("Ajoutez vos premières dépenses pour voir l'état de votre budget en temps réel.")
+        cfg = active_config()
+        st.markdown(f"""
+        <div class="budget-card">
+            <p class="card-label">Budget quotidien de départ</p>
+            <p class="big-daily" style="color:#28a745;">{fmt(summary['initial_daily'])}</p>
+            <p class="card-label">sur {cfg['days_in_month']} jours</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        render_status_card(summary, df)
+
+    st.markdown("---")
+    render_expense_form()
+    render_csv_import()
 
     st.markdown("---")
     render_expense_table(df)
 
     if not df.empty:
-        st.markdown("---")
-        render_charts(df, summary)
-
-    st.markdown("---")
-    render_month_comparison()
+        with st.expander("📈 Graphiques", expanded=False):
+            render_charts(df, summary)
+        with st.expander("📆 Comparaison multi-mois", expanded=False):
+            render_month_comparison()
 
 
 if __name__ == "__main__":
