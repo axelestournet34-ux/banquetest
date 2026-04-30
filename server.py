@@ -16,11 +16,14 @@ from datetime import date
 from pathlib import Path
 
 import httpx
+import redis
 import websockets
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
+
+_r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
 
 PORT    = int(os.getenv("PORT", 8000))
 ST_PORT = 8501
@@ -35,22 +38,15 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 
 # ── Helpers fichiers ──────────────────────────────────────────────────────────
-DATA_DIR = Path(os.getenv("DATA_DIR", "."))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-def _data_file(username: str) -> Path:
-    return DATA_DIR / f"budget_{username}.json"
-
 def _load(username: str) -> dict:
-    f = _data_file(username)
-    if not f.exists():
+    raw = _r.get(f"budget:{username}")
+    if not raw:
         raise HTTPException(status_code=404, detail=f"Utilisateur '{username}' introuvable.")
-    with open(f, "r", encoding="utf-8") as fp:
-        return json.load(fp)
+    return json.loads(raw)
 
 def _save(username: str, data: dict) -> None:
-    with open(_data_file(username), "w", encoding="utf-8") as fp:
-        json.dump(data, fp, ensure_ascii=False, indent=2)
+    _r.set(f"budget:{username}", json.dumps(data, ensure_ascii=False))
+    _r.set(f"mtime:{username}", str(time.time()))
 
 def _ensure_month(data: dict, month_key: str) -> None:
     if month_key not in data:

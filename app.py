@@ -6,21 +6,21 @@ Prévision · Tendances · Filtres · Export CSV
 
 import hashlib
 import json
+import os
+import time
 import extra_streamlit_components as stx
+import redis
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 COOKIE_NAME = "budget_session"
 
-
-import os
-DATA_DIR = Path(os.getenv("DATA_DIR", "."))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-USERS_FILE = DATA_DIR / "users.json"
+@st.cache_resource
+def _redis():
+    return redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
 
 CATEGORIES = [
     "🍔 Alimentation", "🚗 Transport", "🏠 Logement / Factures",
@@ -33,8 +33,6 @@ MOIS_FR = [
     "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
 ]
 
-def data_file_for(username: str) -> Path:
-    return DATA_DIR / f"budget_{username}.json"
 DATE_FORMATS = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d.%m.%Y"]
 
 CURRENCIES = {
@@ -56,14 +54,11 @@ def _hash(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 def load_users() -> dict:
-    if not USERS_FILE.exists():
-        return {}
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    raw = _redis().get("users")
+    return json.loads(raw) if raw else {}
 
 def save_users(users: dict) -> None:
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
+    _redis().set("users", json.dumps(users, ensure_ascii=False))
 
 def register_user(username: str, password: str) -> str | None:
     """Retourne un message d'erreur ou None si succès."""
@@ -124,16 +119,13 @@ def render_auth_page() -> None:
 
 # ── Persistance ───────────────────────────────────────────────────────────────
 def load_data() -> dict:
-    f = data_file_for(st.session_state.username)
-    if not f.exists():
-        return {}
-    with open(f, "r", encoding="utf-8") as fp:
-        return json.load(fp)
+    raw = _redis().get(f"budget:{st.session_state.username}")
+    return json.loads(raw) if raw else {}
 
 def save_data() -> None:
-    f = data_file_for(st.session_state.username)
-    with open(f, "w", encoding="utf-8") as fp:
-        json.dump(st.session_state.data, fp, ensure_ascii=False, indent=2)
+    r = _redis()
+    r.set(f"budget:{st.session_state.username}", json.dumps(st.session_state.data, ensure_ascii=False))
+    r.set(f"mtime:{st.session_state.username}", str(time.time()))
 
 def get_month_keys() -> list:
     return sorted([k for k in st.session_state.data if k not in ("recurring", "settings")], reverse=True)
@@ -205,8 +197,8 @@ def _apply_recurring(month_key: str) -> None:
 
 # ── Session state ─────────────────────────────────────────────────────────────
 def _data_mtime() -> float:
-    f = data_file_for(st.session_state.username)
-    return f.stat().st_mtime if f.exists() else 0.0
+    val = _redis().get(f"mtime:{st.session_state.username}")
+    return float(val) if val else 0.0
 
 def init_state() -> None:
     cm = stx.CookieManager()
