@@ -96,9 +96,10 @@ async def revolut_notification(request: Request):
     expense_date = date.today().isoformat()
     data = _load(username)
     _ensure_month(data, expense_date[:7])
+    category = _auto_categorize(username, desc)
     data[expense_date[:7]]["expenses"].append({
         "date": expense_date, "amount": amount,
-        "category": CATEGORIES_DEFAULT, "description": desc[:80],
+        "category": category, "description": desc[:80],
     })
     _save(username, data)
     return {"status": "ok", "amount": amount, "description": desc}
@@ -106,6 +107,35 @@ async def revolut_notification(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.get("/manifest.json")
+async def manifest():
+    return {
+        "name": "Budget Mensuel",
+        "short_name": "Budget",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#6366F1",
+        "description": "Suivez vos dépenses au quotidien",
+        "icons": [{"src": "https://fav.farm/💶", "sizes": "512x512", "type": "image/png"}],
+    }
+
+@app.get("/sw.js")
+async def service_worker():
+    return Response(
+        content=b"self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));",
+        media_type="application/javascript",
+    )
+
+def _auto_categorize(username: str, description: str) -> str:
+    raw = _r.get(f"auto_rules:{username}")
+    rules = json.loads(raw) if raw else {}
+    desc = description.lower()
+    for kw, cat in rules.items():
+        if kw in desc:
+            return cat
+    return CATEGORIES_DEFAULT
 
 def _parse_revolut(text: str):
     text = text.strip()
