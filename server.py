@@ -90,7 +90,12 @@ async def revolut_notification(request: Request):
         raise HTTPException(status_code=401, detail="Token invalide.")
     username = body.get("username", "")
     notif    = body.get("notif", "")
-    amount, desc = _parse_revolut(notif)
+    title    = body.get("title", "")   # titre de la notif Revolut (optionnel)
+
+    # Toujours logger le dernier webhook reçu pour debug
+    _r.set(f"last_revolut:{username}", json.dumps({"notif": notif, "title": title, "time": str(time.time())}, ensure_ascii=False))
+
+    amount, desc = _parse_revolut(notif, title)
     if amount is None:
         raise HTTPException(status_code=422, detail=f"Impossible de parser : {notif!r}")
     expense_date = date.today().isoformat()
@@ -103,6 +108,13 @@ async def revolut_notification(request: Request):
     })
     _save(username, data)
     return {"status": "ok", "amount": amount, "description": desc}
+
+@app.get("/revolut-log")
+async def revolut_log(token: str = "", username: str = ""):
+    if token != WEBHOOK_TOKEN:
+        raise HTTPException(status_code=401)
+    raw = _r.get(f"last_revolut:{username}")
+    return json.loads(raw) if raw else {"message": "Aucun webhook reçu pour cet utilisateur."}
 
 @app.get("/health")
 async def health():
@@ -137,26 +149,43 @@ def _auto_categorize(username: str, description: str) -> str:
             return cat
     return CATEGORIES_DEFAULT
 
-def _parse_revolut(text: str):
-    text = text.strip()
+def _parse_revolut(text: str, title: str = ""):
+    # Normaliser les espaces Unicode (espace insécable, espace fine, etc.)
+    def _norm(s):
+        s = s.strip()
+        s = re.sub(r'[     ​﻿]', ' ', s)
+        return re.sub(r' +', ' ', s)
+
+    text  = _norm(text)
+    title = _norm(title)
+
     patterns = [
-        # "payé 5.30 CHF (5.81€) a Starbucks" — devise étrangère avec équivalent EUR
+        # "payé 5.30 CHF (5.81€) a/à Starbucks" — devise étrangère
         (r"pay[eé]\s+[\d\s,\.]+\s*\w+\s*\(?([\d,\.]+)\s*(?:€|EUR)\)?\s+(?:a|chez|à|at)\s+(.+)", 1, 2),
-        # "payé 5.81€ chez/à/@ Starbucks"
-        (r"pay[eé]\s+([\d\s,\.]+)\s*(?:€|EUR|eur)(?:\s*[·@]\s*|\s+chez\s+|\s+à\s+|\s+at\s+|\s+a\s+)(.+)", 1, 2),
-        # "paid €5.30 at Starbucks"
+        # "payé 1,50€ à/chez Starbucks" — format français standard
+        (r"pay[eé]\s+([\d\s,\.]+)\s*(?:€|EUR|eur)\s*(?:[·@]|chez|à|at|a)\s+(.+)", 1, 2),
+        # "paid €5.30 at Starbucks" — format anglais
         (r"paid\s+(?:€|EUR)?\s*([\d,\.]+)\s*(?:€|EUR)?\s+(?:at|to|chez|à|a)\s+(.+)", 1, 2),
         # "payment of 5.30€ to Starbucks"
         (r"payment of\s+([\d,\.]+)\s*(?:€|EUR)\s+to\s+(.+)", 1, 2),
-        # fallback : premier nombre suivi de €
+        # fallback : premier nombre suivi de € puis texte
         (r"([\d,\.]+)\s*(?:€|EUR)\s+(.+)", 1, 2),
+        # dernier recours : juste le montant (description = titre ou "Revolut")
+        (r"([\d,\.]+)\s*(?:€|EUR)", 1, None),
     ]
     for pattern, gi, gd in patterns:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
             try:
-                return round(float(m.group(gi).replace(" ", "").replace(",", ".")), 2), m.group(gd).strip().rstrip(".")
-            except ValueError:
+                amt = round(float(m.group(gi).replace(" ", "").replace(",", ".")), 2)
+                if amt <= 0:
+                    continue
+                if gd is not None:
+                    desc = m.group(gd).strip().rstrip(".")
+                else:
+                    desc = title if title else "Revolut"
+                return amt, desc or (title if title else "Revolut")
+            except (ValueError, IndexError):
                 continue
     return None, None
 

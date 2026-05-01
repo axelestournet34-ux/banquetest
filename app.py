@@ -484,16 +484,30 @@ def render_sidebar() -> None:
 
     with st.sidebar.expander("⚡ Tasker : ajout rapide"):
         st.caption("Ajouter une dépense depuis Android sans ouvrir l'app.")
+        uname = st.session_state.username
         st.markdown(f"""
-**Tasker → Nouvelle tâche → HTTP Request :**
-- Méthode : `POST`
+**Tasker → Notif Revolut → ajoute aussi `%evtprm1` (titre) :**
+
+Body webhook à utiliser :
+```
+{{"token":"caca","username":"{uname}","notif":"%evtprm2","title":"%evtprm1"}}
+```
+
+**Tasker → Raccourci manuel :**
 - URL : `https://banquetest.onrender.com/expense`
-- Corps (JSON) :
 ```
-{{"token":"caca","username":"{st.session_state.username}","amount":5.00,"description":"Café","category":"🍽️ Restaurant"}}
+{{"token":"caca","username":"{uname}","amount":5.00,"description":"Café","category":"🍽️ Restaurant"}}
 ```
-Tu peux remplacer les valeurs par des variables Tasker (`%amount`, etc.) ou créer un raccourci sur l'écran d'accueil.
 """)
+        st.markdown("**🔍 Dernier webhook Revolut reçu :**")
+        raw = _redis().get(f"last_revolut:{uname}")
+        if raw:
+            log = json.loads(raw)
+            ts  = datetime.fromtimestamp(float(log.get("time", 0))).strftime("%d/%m %H:%M")
+            st.caption(f"Reçu le {ts}")
+            st.code(f"title : {log.get('title','(vide)')}\nnotif : {log.get('notif','(vide)')}", language="text")
+        else:
+            st.caption("Aucun webhook reçu pour l'instant.")
 
     st.sidebar.markdown("---")
     if st.sidebar.button("🗑️ Réinitialiser les dépenses du mois", use_container_width=True):
