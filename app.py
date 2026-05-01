@@ -31,6 +31,14 @@ CATEGORIES = [
     "🍽️ Restaurant", "✈️ Voyage", "🎁 Cadeaux", "📦 Autres",
 ]
 
+INCOME_CATEGORIES = [
+    "💰 Salaire", "🏦 Virement", "💼 Freelance / Side income",
+    "📈 Remboursement", "🎁 Cadeau reçu", "💸 Autre revenu",
+]
+
+NEEDS_CATS  = {"🍔 Alimentation", "🚗 Transport", "🏠 Logement / Factures", "💊 Santé"}
+WANTS_CATS  = {"🍽️ Restaurant", "🎮 Loisirs", "👗 Vêtements", "✈️ Voyage", "🎁 Cadeaux", "📱 Abonnements", "📦 Autres"}
+
 THEMES = {
     "Indigo": "#6366F1", "Violet": "#8B5CF6", "Rose": "#F43F5E",
     "Orange": "#F59E0B", "Vert": "#10B981", "Bleu": "#3B82F6",
@@ -240,6 +248,7 @@ def init_state() -> None:
     ensure_month(st.session_state.active_month)
     check_weekly_alerts()
     check_monthly_report()
+    check_payment_reminders()
     # Recharge automatiquement si le webhook a écrit une nouvelle transaction
     current_mtime = _data_mtime()
     if current_mtime > st.session_state.get("file_mtime", 0):
@@ -260,31 +269,70 @@ def active_cat_budgets() -> dict:
 def build_df() -> pd.DataFrame:
     expenses = active_expenses()
     if not expenses:
-        return pd.DataFrame(columns=["date", "amount", "category", "description"])
+        return pd.DataFrame(columns=["date", "amount", "category", "description", "type"])
     df = pd.DataFrame(expenses)
     df["amount"] = df["amount"].astype(float)
+    if "type" not in df.columns:
+        df["type"] = "expense"
     return df
+
+def expense_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Retourne uniquement les dépenses (exclut les revenus)."""
+    if "type" in df.columns:
+        return df[df["type"] == "expense"]
+    return df
+
+def income_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Retourne uniquement les revenus."""
+    if "type" in df.columns:
+        return df[df["type"] == "income"]
+    return pd.DataFrame(columns=df.columns)
 
 
 # ── Logique métier ────────────────────────────────────────────────────────────
+def get_historical_daily_avg() -> float:
+    """Moyenne quotidienne des 3 derniers mois complets (hors revenus)."""
+    current = current_month_key()
+    past = [m for m in get_month_keys() if m != current][:3]
+    if not past:
+        return 0.0
+    avgs = []
+    for mk in past:
+        md   = st.session_state.data[mk]
+        days = int(md.get("config", {}).get("days_in_month", 30))
+        tot  = sum(float(e["amount"]) for e in md.get("expenses", []) if e.get("type", "expense") == "expense")
+        if tot > 0 and days > 0:
+            avgs.append(tot / days)
+    return sum(avgs) / len(avgs) if avgs else 0.0
+
 def compute_summary(config: dict, df: pd.DataFrame) -> dict:
     budget = float(config["monthly_budget"])
     total_days = int(config["days_in_month"])
     current_day = int(config["current_day"])
 
-    total_spent = float(df["amount"].sum()) if not df.empty else 0.0
+    exp = expense_df(df)
+    inc = income_df(df)
+    total_income = float(inc["amount"].sum()) if not inc.empty else 0.0
+    total_spent = float(exp["amount"].sum()) if not exp.empty else 0.0
     initial_daily = budget / total_days if total_days > 0 else 0.0
     days_elapsed = min(current_day, total_days)
     days_remaining = max(total_days - days_elapsed, 0)
     budget_remaining = budget - total_spent
     daily_remaining = budget_remaining / days_remaining if days_remaining > 0 else 0.0
     avg_daily = total_spent / days_elapsed if days_elapsed > 0 else 0.0
-    forecast_total = avg_daily * total_days
+    hist_avg  = get_historical_daily_avg()
+    if days_elapsed <= 3 and hist_avg > 0:
+        forecast_base = hist_avg
+    elif hist_avg > 0:
+        forecast_base = (avg_daily * 0.7 + hist_avg * 0.3)
+    else:
+        forecast_base = avg_daily
+    forecast_total = forecast_base * total_days
     ideal_spent = initial_daily * days_elapsed
     difference = ideal_spent - total_spent
 
     return {
-        "budget": budget, "total_spent": total_spent,
+        "budget": budget, "total_spent": total_spent, "total_income": total_income,
         "budget_remaining": budget_remaining, "initial_daily": initial_daily,
         "daily_remaining": daily_remaining, "days_remaining": days_remaining,
         "days_elapsed": days_elapsed, "ideal_spent": ideal_spent,
@@ -431,6 +479,22 @@ def render_sidebar() -> None:
     with st.sidebar.expander("🎨 Thème"):
         _render_theme_sidebar()
 
+    with st.sidebar.expander("🔔 Rappels paiements"):
+        _render_reminders_sidebar()
+
+    with st.sidebar.expander("⚡ Tasker : ajout rapide"):
+        st.caption("Ajouter une dépense depuis Android sans ouvrir l'app.")
+        st.markdown(f"""
+**Tasker → Nouvelle tâche → HTTP Request :**
+- Méthode : `POST`
+- URL : `https://banquetest.onrender.com/expense`
+- Corps (JSON) :
+```
+{{"token":"caca","username":"{st.session_state.username}","amount":5.00,"description":"Café","category":"🍽️ Restaurant"}}
+```
+Tu peux remplacer les valeurs par des variables Tasker (`%amount`, etc.) ou créer un raccourci sur l'écran d'accueil.
+""")
+
     st.sidebar.markdown("---")
     if st.sidebar.button("🗑️ Réinitialiser les dépenses du mois", use_container_width=True):
         st.session_state.data[st.session_state.active_month]["expenses"] = []
@@ -560,43 +624,52 @@ def _render_theme_sidebar() -> None:
 # ── Ajout rapide ──────────────────────────────────────────────────────────────
 def render_quick_add() -> None:
     st.markdown("**⚡ Ajout rapide**")
+    is_income = st.toggle("💰 Revenu (pas une dépense)", key="qa_is_income")
     c1, c2 = st.columns([3, 1])
-    desc = c1.text_input("Description", placeholder="courses, essence…", label_visibility="collapsed", key="qa_desc")
+    desc = c1.text_input("Description", placeholder="courses, salaire…", label_visibility="collapsed", key="qa_desc")
     amt  = c2.number_input("€", min_value=0.01, value=10.0, step=1.0,
                            label_visibility="collapsed", key="qa_amt", format="%.2f")
     c3, c4 = st.columns([3, 1])
-    cat = c3.selectbox("Catégorie", get_categories(), label_visibility="collapsed", key="qa_cat")
+    cats = INCOME_CATEGORIES if is_income else get_categories()
+    cat = c3.selectbox("Catégorie", cats, label_visibility="collapsed", key="qa_cat")
     if c4.button("➕ Ajouter", use_container_width=True, key="qa_btn"):
         active_expenses().append({
             "date": date.today().isoformat(),
             "amount": float(amt),
             "category": cat,
             "description": desc.strip() or "—",
+            "type": "income" if is_income else "expense",
         })
         save_data()
-        st.success(f"✅ {amt:.2f} € ajouté — {cat}")
+        label = "revenu enregistré" if is_income else f"ajouté — {cat}"
+        st.success(f"✅ {amt:.2f} € {label}")
         st.rerun()
 
 
 # ── Formulaire détaillé ───────────────────────────────────────────────────────
 def render_expense_form() -> None:
     sym = CURRENCY_SYMBOLS.get(get_currency(), "€")
-    st.subheader("➕ Ajouter une dépense")
+    st.subheader("➕ Ajouter une transaction")
     with st.form("expense_form", clear_on_submit=True):
+        entry_type = st.radio("Type", ["💸 Dépense", "💰 Revenu"], horizontal=True)
+        is_income  = entry_type == "💰 Revenu"
         c1, c2 = st.columns(2)
         with c1:
             exp_date = st.date_input("Date", value=date.today())
             amount = st.number_input(f"Montant ({sym})", min_value=0.01, value=1.0, step=0.5, format="%.2f")
         with c2:
-            category = st.selectbox("Catégorie", get_categories())
+            cats = INCOME_CATEGORIES if is_income else get_categories()
+            category = st.selectbox("Catégorie", cats)
             description = st.text_input("Description (facultatif)")
         if st.form_submit_button("✅ Ajouter", use_container_width=True, type="primary") and amount > 0:
             active_expenses().append({
                 "date": exp_date.isoformat(), "amount": float(amount),
                 "category": category, "description": description.strip() or "—",
+                "type": "income" if is_income else "expense",
             })
             save_data()
-            st.success(f"**{fmt(amount)}** ajouté dans *{category}* !")
+            label = "revenu enregistré" if is_income else f"ajouté dans *{category}*"
+            st.success(f"**{fmt(amount)}** {label} !")
 
 
 # ── Import CSV ────────────────────────────────────────────────────────────────
@@ -668,6 +741,13 @@ def render_metrics(summary: dict) -> None:
         delta=f"{forecast_delta:+.2f}",
         delta_color="inverse",
     )
+    income = summary.get("total_income", 0)
+    if income > 0:
+        net = income - summary["total_spent"]
+        sign = "+" if net >= 0 else ""
+        c8, c9, _ = st.columns(3)
+        c8.metric("💰 Revenus du mois", fmt(income))
+        c9.metric("📈 Solde net", fmt(net), delta=f"{sign}{net:.2f}", delta_color="normal")
 
 
 # ── Carte de statut ───────────────────────────────────────────────────────────
@@ -1128,6 +1208,78 @@ def detect_subscriptions() -> list:
     return sorted(subs, key=lambda x: x["avg_amount"], reverse=True)
 
 
+# ── Règle 50/30/20 ───────────────────────────────────────────────────────────
+def render_budget_5030(summary: dict, df: pd.DataFrame) -> None:
+    income = summary.get("total_income", 0)
+    base   = income if income > 0 else summary["budget"]
+    label  = "vos revenus" if income > 0 else "votre budget"
+    st.caption(f"Basé sur {label} : **{fmt(base)}**")
+    exp = expense_df(df)
+    needs = float(exp[exp["category"].isin(NEEDS_CATS)]["amount"].sum()) if not exp.empty else 0
+    wants = float(exp[exp["category"].isin(WANTS_CATS)]["amount"].sum()) if not exp.empty else 0
+    savings = max(0.0, summary["budget_remaining"])
+    for emoji, lbl, pct_rec, spent in [
+        ("🏠", "Besoins", 0.50, needs),
+        ("🎮", "Envies",  0.30, wants),
+        ("🏦", "Épargne", 0.20, savings),
+    ]:
+        rec  = base * pct_rec
+        pct  = min(1.0, spent / rec) if rec > 0 else 0
+        over = spent > rec
+        icon = "⚠️" if over else "✅"
+        st.markdown(f"**{icon} {emoji} {lbl} ({int(pct_rec*100)}%)** — {fmt(spent)} / {fmt(rec)} recommandé")
+        st.progress(pct)
+
+
+# ── Rappels de paiement ───────────────────────────────────────────────────────
+def check_payment_reminders() -> None:
+    if not get_notif_cfg().get("email"):
+        return
+    recurring = get_recurring()
+    if not recurring:
+        return
+    reminder_days = int(st.session_state.data.get("settings", {}).get("reminder_days", 3))
+    today = date.today()
+    cfg   = active_config()
+    days_left = int(cfg.get("days_in_month", 30)) - today.day
+    if days_left > reminder_days:
+        return
+    user = st.session_state.username
+    key  = f"reminder:{user}:{today.strftime('%Y-%m')}"
+    if _redis().get(key):
+        return
+    _redis().setex(key, 60 * 60 * 24 * 35, "1")
+    rows = "".join(
+        f"<tr><td style='padding:4px 8px'>{r['description']}</td>"
+        f"<td style='padding:4px 8px'><b>{r['amount']:.2f}€</b></td>"
+        f"<td style='padding:4px 8px;color:#6B7280'>{r['category']}</td></tr>"
+        for r in recurring
+    )
+    total_rec = sum(r["amount"] for r in recurring)
+    send_email(
+        f"🔔 {len(recurring)} paiements récurrents dans {days_left} jour(s)",
+        f"""<div style="font-family:sans-serif;max-width:520px;margin:auto;padding:20px">
+        <h2 style="color:#6366F1">🔔 Paiements à venir</h2>
+        <p>Dans <strong>{days_left} jour(s)</strong>, les paiements suivants seront prélevés :</p>
+        <table style="width:100%;border-collapse:collapse;background:#F9FAFB">{rows}</table>
+        <p><b>Total : {total_rec:.2f}€</b></p>
+        </div>""",
+    )
+
+def _render_reminders_sidebar() -> None:
+    settings = st.session_state.data.get("settings", {})
+    current_days = int(settings.get("reminder_days", 3))
+    st.caption("Email de rappel avant le renouvellement des paiements récurrents.")
+    with st.form("reminders_form"):
+        days = st.number_input("Jours avant la fin du mois", min_value=1, max_value=15, value=current_days)
+        if st.form_submit_button("💾 Sauvegarder", use_container_width=True):
+            if "settings" not in st.session_state.data:
+                st.session_state.data["settings"] = {}
+            st.session_state.data["settings"]["reminder_days"] = int(days)
+            save_data()
+            st.success(f"✓ Rappel {int(days)} jours avant configuré !")
+
+
 # ── Gamification ─────────────────────────────────────────────────────────────
 BADGES = [
     ("🥇", "Premier pas",     "Première dépense enregistrée",   "first_expense"),
@@ -1494,13 +1646,14 @@ def main() -> None:
     render_quick_add()
     st.markdown("---")
 
-    df = build_df()
+    df  = build_df()
+    exp = expense_df(df)   # dépenses uniquement pour les graphiques/calculs
     summary = compute_summary(active_config(), df)
     render_metrics(summary)
-    render_gamification(summary, df)
+    render_gamification(summary, exp)
     st.markdown("---")
 
-    if df.empty:
+    if exp.empty:
         st.subheader("📊 État du budget")
         st.info("Ajoutez vos premières dépenses pour voir l'état de votre budget en temps réel.")
         cfg = active_config()
@@ -1512,7 +1665,7 @@ def main() -> None:
         </div>
         """, unsafe_allow_html=True)
     else:
-        render_status_card(summary, df)
+        render_status_card(summary, exp)
 
     st.markdown("---")
     render_expense_form()
@@ -1528,13 +1681,15 @@ def main() -> None:
     with st.expander("💬 Puis-je me permettre ça ?", expanded=False):
         render_affordability(summary)
 
-    if not df.empty:
+    if not exp.empty:
+        with st.expander("⚖️ Règle 50/30/20", expanded=False):
+            render_budget_5030(summary, exp)
         with st.expander("📅 Calendrier des dépenses", expanded=False):
-            render_calendar(df)
+            render_calendar(exp)
         with st.expander("📅 Vue hebdomadaire", expanded=False):
-            render_weekly_view(df, summary)
+            render_weekly_view(exp, summary)
         with st.expander("📈 Graphiques", expanded=False):
-            render_charts(df, summary)
+            render_charts(exp, summary)
         with st.expander("📊 Budget annuel", expanded=False):
             render_annual_view()
         with st.expander("📆 Comparaison multi-mois", expanded=False):
