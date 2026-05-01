@@ -140,16 +140,22 @@ def _auto_categorize(username: str, description: str) -> str:
 def _parse_revolut(text: str):
     text = text.strip()
     patterns = [
-        r"pay[eé]\s+([\d\s,\.]+)\s*(?:€|EUR|eur)(?:\s*[·@]\s*|\s+chez\s+|\s+à\s+|\s+at\s+)(.+)",
-        r"paid\s+(?:€|EUR)?\s*([\d,\.]+)\s*(?:€|EUR)?\s+(?:at|to|chez|à)\s+(.+)",
-        r"payment of\s+([\d,\.]+)\s*(?:€|EUR)\s+to\s+(.+)",
-        r"([\d,\.]+)\s*(?:€|EUR)\s+(.+)",
+        # "payé 5.30 CHF (5.81€) a Starbucks" — devise étrangère avec équivalent EUR
+        (r"pay[eé]\s+[\d\s,\.]+\s*\w+\s*\(?([\d,\.]+)\s*(?:€|EUR)\)?\s+(?:a|chez|à|at)\s+(.+)", 1, 2),
+        # "payé 5.81€ chez/à/@ Starbucks"
+        (r"pay[eé]\s+([\d\s,\.]+)\s*(?:€|EUR|eur)(?:\s*[·@]\s*|\s+chez\s+|\s+à\s+|\s+at\s+|\s+a\s+)(.+)", 1, 2),
+        # "paid €5.30 at Starbucks"
+        (r"paid\s+(?:€|EUR)?\s*([\d,\.]+)\s*(?:€|EUR)?\s+(?:at|to|chez|à|a)\s+(.+)", 1, 2),
+        # "payment of 5.30€ to Starbucks"
+        (r"payment of\s+([\d,\.]+)\s*(?:€|EUR)\s+to\s+(.+)", 1, 2),
+        # fallback : premier nombre suivi de €
+        (r"([\d,\.]+)\s*(?:€|EUR)\s+(.+)", 1, 2),
     ]
-    for pattern in patterns:
+    for pattern, gi, gd in patterns:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
             try:
-                return round(float(m.group(1).replace(" ", "").replace(",", ".")), 2), m.group(2).strip().rstrip(".")
+                return round(float(m.group(gi).replace(" ", "").replace(",", ".")), 2), m.group(gd).strip().rstrip(".")
             except ValueError:
                 continue
     return None, None
