@@ -1484,11 +1484,6 @@ def main() -> None:
         .js-plotly-plot .main-svg {{ touch-action: pan-y !important; }}
     }}
 </style>
-<script>
-if('serviceWorker' in navigator){{navigator.serviceWorker.register('/sw.js');}}
-var ml=document.createElement('link');ml.rel='manifest';ml.href='/manifest.json';document.head.appendChild(ml);
-var mt=document.createElement('meta');mt.name='theme-color';mt.content='{theme_color}';document.head.appendChild(mt);
-</script>
 """, unsafe_allow_html=True)
 
     active_key = st.session_state.active_month

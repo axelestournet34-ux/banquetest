@@ -230,7 +230,10 @@ async def proxy_http(request: Request, path: str = ""):
                 follow_redirects=True,
             )
             out_headers = {k: v for k, v in rp.headers.items() if k.lower() not in _SKIP}
-            return Response(content=rp.content, status_code=rp.status_code, headers=out_headers)
+            content = rp.content
+            if rp.headers.get("content-type", "").startswith("text/html"):
+                content = _inject_pwa(content)
+            return Response(content=content, status_code=rp.status_code, headers=out_headers)
         except httpx.ConnectError:
             return Response(
                 content=b"<html><body><p>Demarrage en cours, rechargez dans 10 secondes...</p>"
@@ -238,6 +241,19 @@ async def proxy_http(request: Request, path: str = ""):
                 status_code=503,
                 media_type="text/html",
             )
+
+def _inject_pwa(content: bytes) -> bytes:
+    if b"</head>" not in content:
+        return content
+    tags = (
+        b'<link rel="manifest" href="/manifest.json">'
+        b'<meta name="mobile-web-app-capable" content="yes">'
+        b'<meta name="apple-mobile-web-app-capable" content="yes">'
+        b'<meta name="apple-mobile-web-app-title" content="Budget">'
+        b'<meta name="theme-color" content="#6366F1">'
+        b'<script>if("serviceWorker"in navigator){navigator.serviceWorker.register("/sw.js");}</script>'
+    )
+    return content.replace(b"</head>", tags + b"</head>", 1)
 
 
 # ── Démarrage Streamlit ───────────────────────────────────────────────────────
