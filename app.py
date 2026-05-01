@@ -31,6 +31,23 @@ CATEGORIES = [
     "🍽️ Restaurant", "✈️ Voyage", "🎁 Cadeaux", "📦 Autres",
 ]
 
+THEMES = {
+    "Indigo": "#6366F1", "Violet": "#8B5CF6", "Rose": "#F43F5E",
+    "Orange": "#F59E0B", "Vert": "#10B981", "Bleu": "#3B82F6",
+    "Cyan": "#06B6D4",
+}
+
+def get_categories() -> list:
+    raw = _redis().get(f"categories:{st.session_state.username}")
+    extras = json.loads(raw) if raw else []
+    return CATEGORIES + [c for c in extras if c not in CATEGORIES]
+
+def save_extra_categories(extras: list) -> None:
+    _redis().set(f"categories:{st.session_state.username}", json.dumps(extras, ensure_ascii=False))
+
+def get_theme() -> str:
+    return st.session_state.data.get("settings", {}).get("theme", "#6366F1")
+
 MOIS_FR = [
     "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
     "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre",
@@ -222,6 +239,7 @@ def init_state() -> None:
         st.session_state.active_month = current_month_key()
     ensure_month(st.session_state.active_month)
     check_weekly_alerts()
+    check_monthly_report()
     # Recharge automatiquement si le webhook a écrit une nouvelle transaction
     current_mtime = _data_mtime()
     if current_mtime > st.session_state.get("file_mtime", 0):
@@ -386,7 +404,7 @@ def render_sidebar() -> None:
         cat_budgets = active_cat_budgets()
         with st.form("cat_budget_form"):
             new_budgets = {}
-            for cat in CATEGORIES:
+            for cat in get_categories():
                 new_budgets[cat] = st.number_input(
                     cat, min_value=0.0, value=float(cat_budgets.get(cat, 0.0)), step=10.0, format="%.0f",
                 )
@@ -406,6 +424,12 @@ def render_sidebar() -> None:
 
     with st.sidebar.expander("🎯 Objectif d'épargne"):
         _render_savings_goal_sidebar()
+
+    with st.sidebar.expander("🗂️ Catégories personnalisées"):
+        _render_categories_sidebar()
+
+    with st.sidebar.expander("🎨 Thème"):
+        _render_theme_sidebar()
 
     st.sidebar.markdown("---")
     if st.sidebar.button("🗑️ Réinitialiser les dépenses du mois", use_container_width=True):
@@ -491,6 +515,48 @@ def _render_savings_goal_sidebar() -> None:
             st.success("✓ Objectif mis à jour !")
 
 
+# ── Sidebar : catégories personnalisées ──────────────────────────────────────
+def _render_categories_sidebar() -> None:
+    raw   = _redis().get(f"categories:{st.session_state.username}")
+    extras = json.loads(raw) if raw else []
+    st.caption("Ajoutez vos propres catégories en plus des catégories par défaut.")
+    for i, cat in enumerate(extras):
+        c1, c2 = st.columns([5, 1])
+        c1.markdown(cat)
+        if c2.button("✕", key=f"del_cat_{i}"):
+            extras.pop(i)
+            save_extra_categories(extras)
+            st.rerun()
+    with st.form("add_cat_form"):
+        new_cat = st.text_input("Nouvelle catégorie", placeholder="🏋️ Sport")
+        if st.form_submit_button("➕ Ajouter", use_container_width=True) and new_cat.strip():
+            if new_cat.strip() not in CATEGORIES and new_cat.strip() not in extras:
+                extras.append(new_cat.strip())
+                save_extra_categories(extras)
+                st.rerun()
+
+
+# ── Sidebar : thème ───────────────────────────────────────────────────────────
+def _render_theme_sidebar() -> None:
+    current = get_theme()
+    current_name = next((n for n, c in THEMES.items() if c == current), "Indigo")
+    chosen = st.selectbox("Couleur principale", list(THEMES.keys()),
+                          index=list(THEMES.keys()).index(current_name), key="theme_select")
+    if st.button("💾 Appliquer", use_container_width=True, key="apply_theme"):
+        if "settings" not in st.session_state.data:
+            st.session_state.data["settings"] = {}
+        st.session_state.data["settings"]["theme"] = THEMES[chosen]
+        save_data()
+        st.rerun()
+    cols = st.columns(len(THEMES))
+    for i, (name, color) in enumerate(THEMES.items()):
+        cols[i].markdown(
+            f'<div style="background:{color};border-radius:50%;width:24px;height:24px;margin:auto;'
+            f'{"border:3px solid white;box-shadow:0 0 0 2px "+color if color==current else ""}"></div>',
+            unsafe_allow_html=True,
+        )
+
+
 # ── Ajout rapide ──────────────────────────────────────────────────────────────
 def render_quick_add() -> None:
     st.markdown("**⚡ Ajout rapide**")
@@ -499,7 +565,7 @@ def render_quick_add() -> None:
     amt  = c2.number_input("€", min_value=0.01, value=10.0, step=1.0,
                            label_visibility="collapsed", key="qa_amt", format="%.2f")
     c3, c4 = st.columns([3, 1])
-    cat = c3.selectbox("Catégorie", CATEGORIES, label_visibility="collapsed", key="qa_cat")
+    cat = c3.selectbox("Catégorie", get_categories(), label_visibility="collapsed", key="qa_cat")
     if c4.button("➕ Ajouter", use_container_width=True, key="qa_btn"):
         active_expenses().append({
             "date": date.today().isoformat(),
@@ -522,7 +588,7 @@ def render_expense_form() -> None:
             exp_date = st.date_input("Date", value=date.today())
             amount = st.number_input(f"Montant ({sym})", min_value=0.01, value=1.0, step=0.5, format="%.2f")
         with c2:
-            category = st.selectbox("Catégorie", CATEGORIES)
+            category = st.selectbox("Catégorie", get_categories())
             description = st.text_input("Description (facultatif)")
         if st.form_submit_button("✅ Ajouter", use_container_width=True, type="primary") and amount > 0:
             active_expenses().append({
@@ -553,7 +619,7 @@ def render_csv_import() -> None:
         col_date = c1.selectbox("Colonne date", cols, key="csv_col_date")
         col_amt  = c2.selectbox("Colonne montant", cols, key="csv_col_amt")
         col_desc = c3.selectbox("Colonne description", ["— aucune —"] + cols, key="csv_col_desc")
-        default_cat = st.selectbox("Catégorie par défaut", CATEGORIES, key="csv_default_cat")
+        default_cat = st.selectbox("Catégorie par défaut", get_categories(), key="csv_default_cat")
 
         if st.button("✅ Importer", use_container_width=True, key="csv_do_import"):
             imported, skipped = 0, 0
@@ -1062,6 +1128,194 @@ def detect_subscriptions() -> list:
     return sorted(subs, key=lambda x: x["avg_amount"], reverse=True)
 
 
+# ── Gamification ─────────────────────────────────────────────────────────────
+BADGES = [
+    ("🥇", "Premier pas",     "Première dépense enregistrée",   "first_expense"),
+    ("🔥", "Série 7 jours",   "7 jours consécutifs sous budget","streak_7"),
+    ("⭐", "Mois parfait",    "Terminer un mois sous budget",    "month_ok"),
+    ("💎", "Économiseur",     "Économiser plus de 20% du budget","saver_20"),
+    ("📊", "Assidu",          "Données sur 3 mois ou plus",      "three_months"),
+    ("⚡", "Automatisé",      "Première dépense via Revolut",    "revolut_sync"),
+]
+
+def _get_earned() -> list:
+    raw = _redis().get(f"badges:{st.session_state.username}")
+    return json.loads(raw) if raw else []
+
+def _award(badge_id: str) -> bool:
+    earned = _get_earned()
+    if badge_id not in earned:
+        earned.append(badge_id)
+        _redis().set(f"badges:{st.session_state.username}", json.dumps(earned))
+        return True
+    return False
+
+def check_badges(summary: dict, df: pd.DataFrame) -> list:
+    new = []
+    if not df.empty and _award("first_expense"):
+        new.append("first_expense")
+    if summary["budget_remaining"] / summary["budget"] > 0.2 and _award("saver_20"):
+        new.append("saver_20")
+    if summary["days_remaining"] == 0 and summary["budget_remaining"] > 0 and _award("month_ok"):
+        new.append("month_ok")
+    if len(get_month_keys()) >= 3 and _award("three_months"):
+        new.append("three_months")
+    return new
+
+def update_streak(summary: dict) -> int:
+    user = st.session_state.username
+    today_str = date.today().isoformat()
+    last_day  = _redis().get(f"streak_day:{user}") or ""
+    streak    = int(_redis().get(f"streak:{user}") or 0)
+    if last_day == today_str:
+        return streak
+    if summary["daily_remaining"] >= 0:
+        streak += 1
+        _redis().set(f"streak:{user}", streak)
+        if streak >= 7:
+            _award("streak_7")
+    else:
+        streak = 0
+        _redis().set(f"streak:{user}", 0)
+    _redis().set(f"streak_day:{user}", today_str)
+    return streak
+
+def render_gamification(summary: dict, df: pd.DataFrame) -> None:
+    new_badges = check_badges(summary, df)
+    streak = update_streak(summary)
+    earned = _get_earned()
+    for icon, name, _, bid in BADGES:
+        if bid in new_badges:
+            st.balloons()
+            st.success(f"{icon} Nouveau badge débloqué : **{name}** !")
+    cols = st.columns(len(BADGES))
+    for i, (icon, name, desc, bid) in enumerate(BADGES):
+        ok = bid in earned
+        with cols[i]:
+            st.markdown(
+                f'<div style="text-align:center;opacity:{"1" if ok else "0.25"};cursor:default" title="{desc}">'
+                f'<div style="font-size:2rem">{icon}</div>'
+                f'<div style="font-size:10px;color:#6B7280">{name}</div></div>',
+                unsafe_allow_html=True,
+            )
+    if streak > 0:
+        st.caption(f"🔥 Série en cours : **{streak} jour(s)** sous budget quotidien")
+
+
+# ── Vue calendrier ────────────────────────────────────────────────────────────
+def render_calendar(df: pd.DataFrame) -> None:
+    import calendar as cal_mod
+    month_key = st.session_state.active_month
+    y, m = int(month_key[:4]), int(month_key[5:])
+    daily = {}
+    if not df.empty:
+        dc = df.copy()
+        dc["day"] = pd.to_datetime(dc["date"]).dt.day
+        for d, amt in dc.groupby("day")["amount"].sum().items():
+            daily[int(d)] = float(amt)
+    max_amt = max(daily.values()) if daily else 1
+    weeks   = cal_mod.monthcalendar(y, m)
+    today_d = date.today().day if month_key == date.today().strftime("%Y-%m") else -1
+    theme   = get_theme()
+
+    html = '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;">'
+    for dn in ["L","M","M","J","V","S","D"]:
+        html += f'<div style="text-align:center;font-size:11px;color:#9CA3AF;padding:3px">{dn}</div>'
+    for week in weeks:
+        for day in week:
+            if day == 0:
+                html += "<div></div>"
+                continue
+            amt = daily.get(day, 0)
+            intensity = (amt / max_amt) ** 0.6 if max_amt > 0 and amt > 0 else 0
+            r, g, b = int(99 + (99-99)*intensity), int(102 - 102*intensity), int(241 - 200*intensity)
+            bg = f"rgba({r},{g},{b},{intensity*0.85:.2f})" if amt > 0 else "#F9FAFB"
+            tc = "white" if intensity > 0.45 else "#374151"
+            bd = f"2px solid {theme}" if day == today_d else "1px solid #E5E7EB"
+            html += (f'<div style="background:{bg};color:{tc};border:{bd};border-radius:8px;'
+                     f'padding:5px 2px;text-align:center;min-height:44px;">'
+                     f'<div style="font-size:11px;font-weight:600">{day}</div>'
+                     f'{"<div style='font-size:9px'>"+f"{amt:.0f}€"+"</div>" if amt > 0 else ""}'
+                     f"</div>")
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ── Budget annuel ─────────────────────────────────────────────────────────────
+def render_annual_view() -> None:
+    year = st.selectbox("Année", [date.today().year, date.today().year - 1], key="annual_year")
+    months_keys = [f"{year:04d}-{m:02d}" for m in range(1, 13)]
+    rows = []
+    for mk in months_keys:
+        if mk in st.session_state.data:
+            md  = st.session_state.data[mk]
+            exp = md.get("expenses", [])
+            tot = sum(float(e["amount"]) for e in exp)
+            bgt = float(md.get("config", {}).get("monthly_budget", 0))
+            rows.append({"Mois": MOIS_FR[int(mk[5:])-1], "Budget": bgt, "Dépensé": tot, "Économisé": max(0, bgt-tot)})
+    if not rows:
+        st.info("Aucune donnée pour cette année.")
+        return
+    df_y = pd.DataFrame(rows)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("💰 Budget annuel",  f"{df_y['Budget'].sum():.0f} €")
+    c2.metric("💸 Total dépensé",  f"{df_y['Dépensé'].sum():.0f} €")
+    c3.metric("🏦 Total économisé",f"{df_y['Économisé'].sum():.0f} €")
+    fig = go.Figure()
+    theme = get_theme()
+    fig.add_trace(go.Bar(name="Budget",  x=df_y["Mois"], y=df_y["Budget"],  marker_color="#E0E7FF", marker_line_width=0))
+    fig.add_trace(go.Bar(name="Dépensé", x=df_y["Mois"], y=df_y["Dépensé"], marker_color=theme,      marker_line_width=0))
+    fig.update_layout(_base_layout(
+        title=dict(text=f"Budget vs Dépenses {year}", font_size=15, x=0.5, xanchor="center"),
+        barmode="overlay",
+    ))
+    st.plotly_chart(fig, use_container_width=True, config=_CFG)
+
+
+# ── Rapport mensuel automatique ───────────────────────────────────────────────
+def check_monthly_report() -> None:
+    if not get_notif_cfg().get("email") or date.today().day != 1:
+        return
+    user  = st.session_state.username
+    today = date.today()
+    key   = f"monthly_report:{user}:{today.strftime('%Y-%m')}"
+    if _redis().get(key):
+        return
+    _redis().setex(key, 60 * 60 * 24 * 35, "1")
+    m = today.month - 1 or 12
+    y = today.year if today.month > 1 else today.year - 1
+    mk = f"{y:04d}-{m:02d}"
+    if mk not in st.session_state.data:
+        return
+    md  = st.session_state.data[mk]
+    exp = md.get("expenses", [])
+    if not exp:
+        return
+    df_m  = pd.DataFrame(exp)
+    df_m["amount"] = df_m["amount"].astype(float)
+    total  = df_m["amount"].sum()
+    budget = float(md.get("config", {}).get("monthly_budget", 0))
+    saved  = budget - total
+    by_cat = df_m.groupby("category")["amount"].sum().sort_values(ascending=False)
+    rows_h = "".join(f"<tr><td style='padding:4px 8px'>{c}</td><td style='padding:4px 8px'><b>{a:.2f}€</b></td><td style='padding:4px 8px;color:#6B7280'>{a/total*100:.0f}%</td></tr>"
+                     for c, a in by_cat.items())
+    status = ("✅ Mois sous budget" if saved > 0 else "❌ Dépassement de budget")
+    send_email(
+        f"📊 Rapport {month_label(mk)}",
+        f"""<div style="font-family:sans-serif;max-width:520px;margin:auto;padding:20px">
+        <h1 style="color:#6366F1">📊 Rapport {month_label(mk)}</h1>
+        <h2>{status}</h2>
+        <table style="width:100%;border-collapse:collapse">
+        <tr><td>Budget</td><td><b>{budget:.2f}€</b></td></tr>
+        <tr><td>Dépensé</td><td><b>{total:.2f}€</b></td></tr>
+        <tr><td>{'Économisé' if saved>0 else 'Dépassement'}</td><td><b style="color:{'#22C55E' if saved>0 else '#EF4444'}">{abs(saved):.2f}€</b></td></tr>
+        </table><br>
+        <h3>Détail par catégorie</h3>
+        <table style="width:100%;border-collapse:collapse;background:#F9FAFB">{rows_h}</table>
+        </div>""",
+    )
+
+
 # ── Puis-je me permettre ça ? ────────────────────────────────────────────────
 def render_affordability(summary: dict) -> None:
     st.subheader("💬 Puis-je me permettre ça ?")
@@ -1168,36 +1422,6 @@ def render_revolut_csv_import() -> None:
             st.rerun()
 
 
-# ── Analyse IA ────────────────────────────────────────────────────────────────
-def render_ai_analysis(df: pd.DataFrame, summary: dict) -> None:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        st.info("Ajoutez `ANTHROPIC_API_KEY` dans Render → Environment pour activer l'analyse IA.")
-        return
-
-    if st.button("🤖 Analyser mes dépenses avec l'IA", use_container_width=True, type="primary"):
-        with st.spinner("Analyse en cours..."):
-            try:
-                import anthropic
-                by_cat = df.groupby("category")["amount"].sum().sort_values(ascending=False).to_dict()
-                client = anthropic.Anthropic(api_key=api_key)
-                msg = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=600,
-                    messages=[{"role": "user", "content": f"""Analyse ces dépenses mensuelles et donne 4 conseils pratiques et personnalisés en français. Sois direct, concis et bienveillant.
-
-Budget : {summary['budget']:.0f}€ | Dépensé : {summary['total_spent']:.0f}€ ({summary['total_spent']/summary['budget']*100:.0f}%) | Jours restants : {summary['days_remaining']}
-
-Dépenses par catégorie :
-{chr(10).join(f"- {cat}: {amt:.2f}€" for cat, amt in by_cat.items())}
-
-Format : 4 points avec emoji, chacun sur une ligne."""}]
-                )
-                st.markdown("### 🤖 Analyse de vos dépenses")
-                st.markdown(msg.content[0].text)
-            except Exception as e:
-                st.error(f"Erreur IA : {e}")
-
 
 # ── Comparaison multi-mois ────────────────────────────────────────────────────
 def render_month_comparison() -> None:
@@ -1241,27 +1465,30 @@ def main() -> None:
         render_auth_page()
         return
 
-    st.markdown("""
+    theme_color = get_theme()
+    st.markdown(f"""
 <style>
-    .big-daily { font-size:3.5rem; font-weight:800; text-align:center; margin:.3rem 0; line-height:1.1; }
-    .card-label { text-align:center; color:#6c757d; font-size:.85rem; margin:0; }
-    .budget-card { background:#f8f9fa; border-radius:14px; padding:1.5rem 1rem; margin:.5rem 0 1rem 0; }
-    .cat-pill { padding:.35rem .8rem; border-radius:8px; margin:.2rem 0; font-size:.88rem; }
-    <script>
-    if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}
-    var ml=document.createElement('link');ml.rel='manifest';ml.href='/manifest.json';document.head.appendChild(ml);
-    var mt=document.createElement('meta');mt.name='theme-color';mt.content='#6366F1';document.head.appendChild(mt);
-    </script>
-    .js-plotly-plot { border-radius:16px !important; box-shadow:0 2px 16px rgba(0,0,0,0.07); padding:4px; background:white; }
-    @media (max-width: 640px) {
-        .big-daily { font-size:2.2rem; }
-        div[data-testid="stMetric"] { padding:.3rem .2rem; }
-        div[data-testid="stMetricValue"] { font-size:1rem !important; }
-        div[data-testid="stMetricLabel"] { font-size:.7rem !important; }
-        section[data-testid="stSidebar"] { width:85vw !important; }
-        .js-plotly-plot .main-svg { touch-action: pan-y !important; }
-    }
+    .big-daily {{ font-size:3.5rem; font-weight:800; text-align:center; margin:.3rem 0; line-height:1.1; }}
+    .card-label {{ text-align:center; color:#6c757d; font-size:.85rem; margin:0; }}
+    .budget-card {{ background:#f8f9fa; border-radius:14px; padding:1.5rem 1rem; margin:.5rem 0 1rem 0; }}
+    .cat-pill {{ padding:.35rem .8rem; border-radius:8px; margin:.2rem 0; font-size:.88rem; }}
+    .js-plotly-plot {{ border-radius:16px !important; box-shadow:0 2px 16px rgba(0,0,0,0.07); padding:4px; background:white; }}
+    .stButton > button[kind="primary"] {{ background: {theme_color} !important; border-color: {theme_color} !important; }}
+    .stProgress > div > div > div {{ background: {theme_color} !important; }}
+    @media (max-width: 640px) {{
+        .big-daily {{ font-size:2.2rem; }}
+        div[data-testid="stMetric"] {{ padding:.3rem .2rem; }}
+        div[data-testid="stMetricValue"] {{ font-size:1rem !important; }}
+        div[data-testid="stMetricLabel"] {{ font-size:.7rem !important; }}
+        section[data-testid="stSidebar"] {{ width:85vw !important; }}
+        .js-plotly-plot .main-svg {{ touch-action: pan-y !important; }}
+    }}
 </style>
+<script>
+if('serviceWorker' in navigator){{navigator.serviceWorker.register('/sw.js');}}
+var ml=document.createElement('link');ml.rel='manifest';ml.href='/manifest.json';document.head.appendChild(ml);
+var mt=document.createElement('meta');mt.name='theme-color';mt.content='{theme_color}';document.head.appendChild(mt);
+</script>
 """, unsafe_allow_html=True)
 
     active_key = st.session_state.active_month
@@ -1275,6 +1502,7 @@ def main() -> None:
     df = build_df()
     summary = compute_summary(active_config(), df)
     render_metrics(summary)
+    render_gamification(summary, df)
     st.markdown("---")
 
     if df.empty:
@@ -1306,14 +1534,16 @@ def main() -> None:
         render_affordability(summary)
 
     if not df.empty:
+        with st.expander("📅 Calendrier des dépenses", expanded=False):
+            render_calendar(df)
         with st.expander("📅 Vue hebdomadaire", expanded=False):
             render_weekly_view(df, summary)
         with st.expander("📈 Graphiques", expanded=False):
             render_charts(df, summary)
+        with st.expander("📊 Budget annuel", expanded=False):
+            render_annual_view()
         with st.expander("📆 Comparaison multi-mois", expanded=False):
             render_month_comparison()
-        with st.expander("🤖 Analyse IA", expanded=False):
-            render_ai_analysis(df, summary)
         subs = detect_subscriptions()
         if subs:
             with st.expander(f"🔁 Abonnements détectés ({len(subs)})", expanded=False):
