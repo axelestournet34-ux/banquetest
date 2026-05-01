@@ -654,47 +654,93 @@ def render_expense_table(df: pd.DataFrame) -> None:
 
 
 # ── Graphiques ────────────────────────────────────────────────────────────────
+_PALETTE = ["#6366F1","#22D3EE","#F59E0B","#10B981","#F43F5E","#A78BFA","#FB923C","#34D399","#60A5FA","#E879F9","#FBBF24"]
+_CFG     = {"scrollZoom": False, "displayModeBar": False, "doubleClick": False}
+_LAYOUT  = dict(
+    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="Inter,system-ui,sans-serif", size=13, color="#374151"),
+    margin=dict(l=8, r=8, t=44, b=8),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5, font_size=12),
+    hoverlabel=dict(bgcolor="white", font_size=13, bordercolor="#E5E7EB"),
+)
+
+def _base_layout(**kw):
+    d = dict(_LAYOUT)
+    d.update(kw)
+    return d
+
 def render_charts(df: pd.DataFrame, summary: dict) -> None:
-    st.subheader("📈 Visualisations")
-    tab1, tab2, tab3, tab4 = st.tabs(["📅 Par jour", "🏷️ Par catégorie", "📈 Progression", "📆 Tendances"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📅 Par jour", "🏷️ Catégories", "📈 Progression", "📆 Tendances"])
 
     with tab1:
         daily = df.groupby("date")["amount"].sum().reset_index().sort_values("date")
         daily.columns = ["Date", "Montant"]
-        fig = px.bar(daily, x="Date", y="Montant", title="Dépenses journalières (€)",
-                     color="Montant", color_continuous_scale="Reds", text_auto=".2f")
-        fig.update_layout(coloraxis_showscale=False,
-                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-        fig.update_traces(textposition="outside")
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.bar(
+            daily, x="Date", y="Montant",
+            color="Montant", color_continuous_scale=[[0,"#C7D2FE"],[1,"#4F46E5"]],
+            text_auto=".0f",
+        )
+        fig.update_traces(
+            marker_line_width=0,
+            textfont_size=11, textposition="outside",
+            hovertemplate="<b>%{x}</b><br>%{y:.2f} €<extra></extra>",
+        )
+        fig.update_layout(_base_layout(
+            title=dict(text="Dépenses par jour", font_size=15, x=0.5, xanchor="center"),
+            coloraxis_showscale=False,
+            yaxis=dict(showgrid=True, gridcolor="#F3F4F6", zeroline=False),
+            xaxis=dict(showgrid=False),
+        ))
+        st.plotly_chart(fig, use_container_width=True, config=_CFG)
 
     with tab2:
-        by_cat = df.groupby("category")["amount"].sum().reset_index()
+        by_cat = df.groupby("category")["amount"].sum().reset_index().sort_values("amount", ascending=False)
         by_cat.columns = ["Catégorie", "Montant"]
-        fig = px.pie(by_cat, names="Catégorie", values="Montant",
-                     title="Répartition par catégorie", hole=0.45,
-                     color_discrete_sequence=px.colors.qualitative.Pastel)
-        fig.update_traces(textposition="outside", textinfo="label+percent")
-        st.plotly_chart(fig, use_container_width=True)
+        fig = go.Figure(go.Pie(
+            labels=by_cat["Catégorie"], values=by_cat["Montant"],
+            hole=0.55,
+            marker=dict(colors=_PALETTE, line=dict(color="white", width=2)),
+            textinfo="percent", textposition="outside",
+            hovertemplate="<b>%{label}</b><br>%{value:.2f} €  ·  %{percent}<extra></extra>",
+            pull=[0.05] + [0] * (len(by_cat) - 1),
+        ))
+        total = by_cat["Montant"].sum()
+        fig.add_annotation(text=f"<b>{total:.0f} €</b>", x=0.5, y=0.5,
+                           font=dict(size=18, color="#111827"), showarrow=False)
+        fig.update_layout(_base_layout(
+            title=dict(text="Répartition des dépenses", font_size=15, x=0.5, xanchor="center"),
+            showlegend=True,
+        ))
+        st.plotly_chart(fig, use_container_width=True, config=_CFG)
 
         cat_budgets = active_cat_budgets()
         limits = {cat: lim for cat, lim in cat_budgets.items() if lim > 0}
         if limits:
             spent_map = by_cat.set_index("Catégorie")["Montant"].to_dict()
-            rows = [{"Catégorie": cat, "Dépensé": spent_map.get(cat, 0.0), "Budget max": lim}
+            rows = [{"Catégorie": cat, "Dépensé": spent_map.get(cat, 0.0), "Budget": lim}
                     for cat, lim in limits.items()]
-            df_lim = pd.DataFrame(rows)
+            df_lim = pd.DataFrame(rows).sort_values("Dépensé", ascending=True)
             fig2 = go.Figure()
-            fig2.add_trace(go.Bar(name="Budget max", x=df_lim["Catégorie"], y=df_lim["Budget max"],
-                                   marker_color="#d1e7dd", opacity=0.9))
-            fig2.add_trace(go.Bar(name="Dépensé", x=df_lim["Catégorie"], y=df_lim["Dépensé"],
-                                   marker_color="#4A90D9"))
-            fig2.update_layout(barmode="overlay", title="Dépensé vs Enveloppe",
-                                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig2, use_container_width=True)
+            fig2.add_trace(go.Bar(
+                name="Budget", y=df_lim["Catégorie"], x=df_lim["Budget"],
+                orientation="h", marker_color="#E0E7FF", marker_line_width=0,
+            ))
+            fig2.add_trace(go.Bar(
+                name="Dépensé", y=df_lim["Catégorie"], x=df_lim["Dépensé"],
+                orientation="h", marker_color="#6366F1", marker_line_width=0,
+                hovertemplate="<b>%{y}</b><br>Dépensé : %{x:.2f} €<extra></extra>",
+            ))
+            fig2.update_layout(_base_layout(
+                title=dict(text="Budget vs Dépenses par catégorie", font_size=15, x=0.5, xanchor="center"),
+                barmode="overlay",
+                xaxis=dict(showgrid=True, gridcolor="#F3F4F6"),
+                yaxis=dict(showgrid=False),
+                height=max(250, len(limits) * 42),
+            ))
+            st.plotly_chart(fig2, use_container_width=True, config=_CFG)
 
     with tab3:
-        total_days = summary["total_days"]
+        total_days    = summary["total_days"]
         initial_daily = summary["initial_daily"]
         ideal_x = list(range(0, total_days + 1))
         ideal_y = [initial_daily * d for d in ideal_x]
@@ -702,34 +748,44 @@ def render_charts(df: pd.DataFrame, summary: dict) -> None:
         daily_cum = df.groupby("date")["amount"].sum().reset_index().sort_values("date")
         daily_cum["cumsum"] = daily_cum["amount"].cumsum()
         try:
-            key = st.session_state.active_month
+            key       = st.session_state.active_month
             first_day = date(int(key[:4]), int(key[5:]), 1)
             days_nums = [(date.fromisoformat(d) - first_day).days + 1 for d in daily_cum["date"]]
         except Exception:
             days_nums = list(range(1, len(daily_cum) + 1))
 
         days_elapsed = summary["days_elapsed"]
-        avg_daily = summary["avg_daily"]
-        forecast_x = list(range(days_elapsed, total_days + 1))
-        forecast_y = [summary["total_spent"] + avg_daily * (d - days_elapsed) for d in forecast_x]
+        avg_daily    = summary["avg_daily"]
+        forecast_x   = list(range(days_elapsed, total_days + 1))
+        forecast_y   = [summary["total_spent"] + avg_daily * (d - days_elapsed) for d in forecast_x]
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=ideal_x, y=ideal_y, mode="lines", name="Rythme idéal",
-                                  line=dict(color="#28a745", dash="dash", width=2)))
+        fig.add_trace(go.Scatter(
+            x=ideal_x, y=ideal_y, mode="lines", name="Rythme idéal",
+            line=dict(color="#10B981", dash="dash", width=2),
+            hovertemplate="Jour %{x} — idéal : %{y:.2f} €<extra></extra>",
+        ))
         if not daily_cum.empty:
-            fig.add_trace(go.Scatter(x=days_nums, y=daily_cum["cumsum"].tolist(),
-                                      mode="lines+markers", name="Dépenses réelles",
-                                      line=dict(color="#dc3545", width=2), marker=dict(size=6)))
+            fig.add_trace(go.Scatter(
+                x=days_nums, y=daily_cum["cumsum"].tolist(),
+                mode="lines+markers", name="Réel",
+                line=dict(color="#6366F1", width=3),
+                marker=dict(size=7, color="#6366F1", line=dict(color="white", width=2)),
+                fill="tozeroy", fillcolor="rgba(99,102,241,0.08)",
+                hovertemplate="Jour %{x} — %{y:.2f} €<extra></extra>",
+            ))
         if len(forecast_x) > 1:
-            fig.add_trace(go.Scatter(x=forecast_x, y=forecast_y, mode="lines", name="Prévision",
-                                      line=dict(color="#fd7e14", dash="dot", width=2)))
-        fig.update_layout(
-            title="Progression cumulée vs rythme idéal + prévision",
-            xaxis_title="Jour du mois", yaxis_title="Montant cumulé (€)",
-            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            fig.add_trace(go.Scatter(
+                x=forecast_x, y=forecast_y, mode="lines", name="Prévision",
+                line=dict(color="#F59E0B", dash="dot", width=2),
+                hovertemplate="Jour %{x} — prévision : %{y:.2f} €<extra></extra>",
+            ))
+        fig.update_layout(_base_layout(
+            title=dict(text="Progression cumulée", font_size=15, x=0.5, xanchor="center"),
+            xaxis=dict(title="Jour du mois", showgrid=False),
+            yaxis=dict(title="€ cumulés", showgrid=True, gridcolor="#F3F4F6", zeroline=False),
+        ))
+        st.plotly_chart(fig, use_container_width=True, config=_CFG)
 
     with tab4:
         months = get_month_keys()
@@ -746,20 +802,28 @@ def render_charts(df: pd.DataFrame, summary: dict) -> None:
                 for cat, total in df_m.groupby("category")["amount"].sum().items():
                     rows.append({"Mois": month_label(key), "Catégorie": cat, "Montant": total})
             if rows:
-                df_trends = pd.DataFrame(rows)
-                all_cats = df_trends["Catégorie"].unique().tolist()
+                df_trends   = pd.DataFrame(rows)
+                all_cats    = df_trends["Catégorie"].unique().tolist()
                 selected_cats = st.multiselect(
                     "Catégories à afficher", all_cats,
                     default=all_cats[:min(5, len(all_cats))], key="trend_cats",
                 )
                 if selected_cats:
                     df_f = df_trends[df_trends["Catégorie"].isin(selected_cats)]
-                    fig = px.line(df_f, x="Mois", y="Montant", color="Catégorie",
-                                  title="Tendances par catégorie (multi-mois)", markers=True,
-                                  color_discrete_sequence=px.colors.qualitative.Set2)
-                    fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                                      legend=dict(orientation="h", yanchor="bottom", y=1.02))
-                    st.plotly_chart(fig, use_container_width=True)
+                    fig  = px.line(
+                        df_f, x="Mois", y="Montant", color="Catégorie",
+                        markers=True, color_discrete_sequence=_PALETTE,
+                    )
+                    fig.update_traces(
+                        line_width=2.5, marker_size=8,
+                        marker=dict(line=dict(color="white", width=2)),
+                    )
+                    fig.update_layout(_base_layout(
+                        title=dict(text="Tendances mensuelles", font_size=15, x=0.5, xanchor="center"),
+                        xaxis=dict(showgrid=False),
+                        yaxis=dict(showgrid=True, gridcolor="#F3F4F6", zeroline=False),
+                    ))
+                    st.plotly_chart(fig, use_container_width=True, config=_CFG)
 
 
 # ── Comparaison multi-mois ────────────────────────────────────────────────────
@@ -810,12 +874,14 @@ def main() -> None:
     .card-label { text-align:center; color:#6c757d; font-size:.85rem; margin:0; }
     .budget-card { background:#f8f9fa; border-radius:14px; padding:1.5rem 1rem; margin:.5rem 0 1rem 0; }
     .cat-pill { padding:.35rem .8rem; border-radius:8px; margin:.2rem 0; font-size:.88rem; }
+    .js-plotly-plot { border-radius:16px !important; box-shadow:0 2px 16px rgba(0,0,0,0.07); padding:4px; background:white; }
     @media (max-width: 640px) {
         .big-daily { font-size:2.2rem; }
         div[data-testid="stMetric"] { padding:.3rem .2rem; }
         div[data-testid="stMetricValue"] { font-size:1rem !important; }
         div[data-testid="stMetricLabel"] { font-size:.7rem !important; }
         section[data-testid="stSidebar"] { width:85vw !important; }
+        .js-plotly-plot .main-svg { touch-action: pan-y !important; }
     }
 </style>
 """, unsafe_allow_html=True)
