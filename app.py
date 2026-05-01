@@ -540,8 +540,12 @@ def _render_notif_sidebar() -> None:
             st.success("✓ Sauvegardé !")
     if cfg.get("email"):
         if st.button("📨 Email test", use_container_width=True, key="test_email"):
-            ok = send_email("✅ Test Budget App", "<h2>Ça fonctionne !</h2><p>Vos alertes email sont bien configurées.</p>")
-            st.success("Email envoyé !") if ok else st.error("Échec — vérifiez vos identifiants.")
+            with st.spinner("Connexion à Gmail… (max 15 s)"):
+                ok = send_email("✅ Test Budget App", "<h2>Ça fonctionne !</h2><p>Vos alertes email sont bien configurées.</p>")
+            if ok:
+                st.success("✅ Email envoyé !")
+            else:
+                st.error("❌ Échec. Vérifiez : adresse Gmail, mot de passe d'application (pas votre vrai mdp Google), et que la validation en 2 étapes est activée.")
 
 
 # ── Sidebar : auto-catégorisation ─────────────────────────────────────────────
@@ -1086,13 +1090,22 @@ def send_email(subject: str, html: str) -> bool:
     to, gmail, pwd = cfg.get("email", ""), cfg.get("gmail", ""), cfg.get("app_password", "")
     if not all([to, gmail, pwd]):
         return False
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = gmail
+    msg["To"]      = to
+    msg.attach(MIMEText(html, "html", "utf-8"))
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = gmail
-        msg["To"] = to
-        msg.attach(MIMEText(html, "html", "utf-8"))
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as s:
+            s.login(gmail, pwd)
+            s.sendmail(gmail, to, msg.as_string())
+        return True
+    except Exception:
+        pass
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
+            s.ehlo()
+            s.starttls()
             s.login(gmail, pwd)
             s.sendmail(gmail, to, msg.as_string())
         return True
