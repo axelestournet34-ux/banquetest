@@ -249,6 +249,7 @@ def init_state() -> None:
     check_weekly_alerts()
     check_monthly_report()
     check_daily_alert()
+    check_trend_alerts()
     check_payment_reminders()
     current_mtime = _data_mtime()
     if current_mtime > st.session_state.get("file_mtime", 0):
@@ -1171,6 +1172,74 @@ def check_weekly_alerts() -> None:
         </div>""")
 
 
+# ── Alertes de tendances ──────────────────────────────────────────────────────
+def check_trend_alerts() -> None:
+    if not get_notif_cfg().get("email"):
+        return
+    months = get_month_keys()
+    if len(months) < 2:
+        return
+    cur_key = current_month_key()
+    if cur_key not in months:
+        return
+    cur_idx  = months.index(cur_key)
+    if cur_idx + 1 >= len(months):
+        return
+    prev_key = months[cur_idx + 1]
+    cur_data  = st.session_state.data.get(cur_key, {})
+    prev_data = st.session_state.data.get(prev_key, {})
+    cur_exps  = [e for e in cur_data.get("expenses", []) if e.get("type", "expense") == "expense"]
+    prev_exps = [e for e in prev_data.get("expenses", []) if e.get("type", "expense") == "expense"]
+    if not cur_exps or not prev_exps:
+        return
+    cfg          = cur_data.get("config", {})
+    days_elapsed = max(1, int(cfg.get("current_day", date.today().day)))
+    total_days   = max(1, int(cfg.get("days_in_month", 30)))
+    df_cur  = pd.DataFrame(cur_exps)
+    df_prev = pd.DataFrame(prev_exps)
+    df_cur["amount"]  = df_cur["amount"].astype(float)
+    df_prev["amount"] = df_prev["amount"].astype(float)
+    cur_by_cat  = df_cur.groupby("category")["amount"].sum()
+    prev_by_cat = df_prev.groupby("category")["amount"].sum()
+    alerts = []
+    for cat, cur_spent in cur_by_cat.items():
+        if cat not in prev_by_cat:
+            continue
+        projected = cur_spent / days_elapsed * total_days
+        prev = float(prev_by_cat[cat])
+        if prev > 5 and projected > prev * 1.35:
+            alerts.append((cat, projected, prev, (projected / prev - 1) * 100))
+    if not alerts:
+        return
+    user = st.session_state.username
+    key  = f"trend_alert:{user}:{cur_key}"
+    if _redis().get(key):
+        return
+    _redis().setex(key, 60 * 60 * 24 * 35, "1")
+    rows_h = "".join(
+        f"<tr><td style='padding:6px 10px'>{cat}</td>"
+        f"<td style='padding:6px 10px'>~{proj:.0f} €</td>"
+        f"<td style='padding:6px 10px;color:#dc3545;font-weight:700'>+{pct:.0f}%</td>"
+        f"<td style='padding:6px 10px;color:#6B7280'>{prev:.0f} € mois dernier</td></tr>"
+        for cat, proj, prev, pct in alerts
+    )
+    send_email(
+        f"📈 Tendances à surveiller — {month_label(cur_key)}",
+        f"""<div style="font-family:sans-serif;max-width:540px;margin:auto;padding:20px">
+        <h2 style="color:#F59E0B">📈 Dépenses en forte hausse</h2>
+        <p>Ces catégories dépassent de +35% le mois précédent :</p>
+        <table style="width:100%;border-collapse:collapse">
+        <tr style="background:#FEF9EC">
+          <th style="padding:6px 10px;text-align:left">Catégorie</th>
+          <th style="padding:6px 10px;text-align:left">Prévu</th>
+          <th style="padding:6px 10px;text-align:left">Hausse</th>
+          <th style="padding:6px 10px;text-align:left">Référence</th></tr>
+        {rows_h}</table>
+        <p style="color:#9CA3AF;font-size:.82rem">Prévision basée sur le rythme du mois en cours.</p>
+        </div>""",
+    )
+
+
 # ── Solde bancaire manuel ─────────────────────────────────────────────────────
 def get_bank_balance():
     val = st.session_state.data.get("settings", {}).get("bank_balance")
@@ -1682,6 +1751,212 @@ def render_month_comparison() -> None:
     st.dataframe(df_comp, use_container_width=True, hide_index=True)
 
 
+# ── Score de santé financière ─────────────────────────────────────────────────
+def compute_health_score(summary: dict, df: pd.DataFrame) -> dict:
+    # Rythme (40 pts)
+    if summary["days_elapsed"] > 0 and summary["ideal_spent"] > 0:
+        ratio = summary["total_spent"] / summary["ideal_spent"]
+        if ratio <= 1.0:   pace_pts = 40
+        elif ratio <= 1.3: pace_pts = max(0, int(40 * (1.3 - ratio) / 0.3))
+        else:              pace_pts = 0
+    else:
+        pace_pts = 40
+    # Prévision (30 pts)
+    if summary["budget"] > 0:
+        fr = summary["forecast_total"] / summary["budget"]
+        forecast_pts = 30 if fr <= 0.9 else 20 if fr <= 1.0 else 10 if fr <= 1.1 else 0
+    else:
+        forecast_pts = 30
+    # Épargne potentielle (20 pts)
+    if summary["budget"] > 0:
+        savings_pts = int(20 * max(0.0, min(1.0, summary["budget_remaining"] / summary["budget"] * 1.5)))
+    else:
+        savings_pts = 0
+    # Régularité (10 pts)
+    exp = expense_df(df)
+    if not exp.empty and summary["initial_daily"] > 0:
+        max_day = float(exp.groupby("date")["amount"].sum().max())
+        reg_pts = 10 if max_day <= summary["initial_daily"] * 2.5 else 5 if max_day <= summary["initial_daily"] * 4 else 0
+    else:
+        reg_pts = 10
+    score = pace_pts + forecast_pts + savings_pts + reg_pts
+    return {
+        "score": score,
+        "breakdown": {"Rythme": pace_pts, "Prévision": forecast_pts, "Épargne": savings_pts, "Régularité": reg_pts},
+    }
+
+def render_health_score(summary: dict, df: pd.DataFrame) -> None:
+    h = compute_health_score(summary, df)
+    s = h["score"]
+    if s >= 75:   color, label, icon = "#22C55E", "Excellent", "🟢"
+    elif s >= 50: color, label, icon = "#F59E0B", "Correct",   "🟡"
+    elif s >= 30: color, label, icon = "#F97316", "Fragile",   "🟠"
+    else:         color, label, icon = "#EF4444", "Critique",  "🔴"
+    b = h["breakdown"]
+    details = "  ·  ".join(f"{k} <b style='color:{color}'>{v}</b>" for k, v in b.items())
+    st.markdown(f"""
+    <div class="budget-card" style="text-align:center;">
+        <p class="card-label">Score de santé financière</p>
+        <p class="big-daily" style="color:{color};font-size:3rem;">{s}<span style="font-size:1.2rem;color:#9CA3AF">/100</span></p>
+        <p style="color:{color};font-weight:700;margin:0">{icon} {label}</p>
+        <p style="font-size:.78rem;color:#6B7280;margin-top:.4rem">{details}</p>
+    </div>""", unsafe_allow_html=True)
+
+
+# ── Prévision par catégorie ───────────────────────────────────────────────────
+def render_category_forecasts(df: pd.DataFrame, summary: dict) -> None:
+    exp = expense_df(df)
+    if exp.empty or summary["days_elapsed"] == 0:
+        return
+    cat_budgets  = active_cat_budgets()
+    by_cat       = exp.groupby("category")["amount"].sum()
+    total_days   = max(1, summary["total_days"])
+    days_elapsed = max(1, summary["days_elapsed"])
+    rows = sorted(
+        [{"cat": cat, "spent": float(spent),
+          "projected": round(float(spent) / days_elapsed * total_days, 2),
+          "limit": float(cat_budgets.get(cat, 0))}
+         for cat, spent in by_cat.items()],
+        key=lambda x: x["projected"], reverse=True,
+    )
+    theme = get_theme()
+    st.markdown("**🔮 Prévision fin de mois par catégorie**")
+    for r in rows:
+        if r["limit"] > 0:
+            pct = r["projected"] / r["limit"]
+            if pct >= 1.2:   bc, badge = "#dc3545", "🔴 Dépassement"
+            elif pct >= 0.9: bc, badge = "#fd7e14", "⚠️ Limite proche"
+            else:             bc, badge = "#22C55E", "✅ OK"
+            limit_str = f" / {fmt(r['limit'])}"
+            badge_html = f' &nbsp;<b style="color:{bc}">{badge}</b>'
+        else:
+            limit_str, badge_html = "", ""
+        st.markdown(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:.4rem 0;border-bottom:1px solid #F5F5FA;">'
+            f'<span style="font-size:.88rem">{r["cat"]}</span>'
+            f'<span style="font-size:.82rem;color:#6B7280">~{fmt(r["projected"])}'
+            f'{limit_str}{badge_html}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ── Mode voyage ───────────────────────────────────────────────────────────────
+def get_voyage() -> dict:
+    return st.session_state.data.get("settings", {}).get("voyage", {})
+
+def is_voyage_active() -> bool:
+    v = get_voyage()
+    if not v or not v.get("start") or not v.get("end"):
+        return False
+    today = date.today().isoformat()
+    return v["start"] <= today <= v["end"]
+
+def render_voyage_card(df: pd.DataFrame) -> None:
+    if not is_voyage_active():
+        return
+    v      = get_voyage()
+    budget = float(v.get("budget", 0))
+    label  = v.get("label", "Voyage")
+    cur    = v.get("currency", get_currency())
+    sym    = CURRENCY_SYMBOLS.get(cur, "€")
+    exp    = expense_df(df)
+    spent  = float(exp[(exp["date"] >= v["start"]) & (exp["date"] <= v["end"])]["amount"].sum()) if not exp.empty else 0.0
+    remaining = budget - spent
+    color  = "#22C55E" if remaining >= 0 else "#dc3545"
+    days_left = max(0, (date.fromisoformat(v["end"]) - date.today()).days)
+    theme  = get_theme()
+    st.markdown(f"""
+    <div class="budget-card" style="border-left:4px solid {theme};">
+        <p class="card-label">✈️ {label} · du {v['start'][8:10]}/{v['start'][5:7]} au {v['end'][8:10]}/{v['end'][5:7]}</p>
+        <p class="big-daily" style="color:{color};font-size:2rem;">{remaining:.2f} {sym}</p>
+        <p class="card-label">Dépensé : {spent:.2f} {sym} / {budget:.2f} {sym} · {days_left} jour(s) restant(s)</p>
+    </div>""", unsafe_allow_html=True)
+
+def _render_voyage_settings() -> None:
+    v = get_voyage()
+    if is_voyage_active():
+        st.success(f"✈️ Mode actif : **{v.get('label','Voyage')}** jusqu'au {v.get('end','')}")
+    st.caption("Budget temporaire pour un voyage. La carte s'affiche automatiquement dans Budget.")
+    with st.form("voyage_form"):
+        label  = st.text_input("Nom du voyage", value=v.get("label", ""), placeholder="Barcelone, Genève…")
+        c1, c2 = st.columns(2)
+        start  = c1.date_input("Départ", value=date.fromisoformat(v["start"]) if v.get("start") else date.today())
+        end    = c2.date_input("Retour", value=date.fromisoformat(v["end"])   if v.get("end")   else date.today())
+        c3, c4 = st.columns(2)
+        budget = c3.number_input("Budget", min_value=0.0, value=float(v.get("budget", 500)), step=50.0, format="%.2f")
+        cur_idx = list(CURRENCIES.keys()).index(v["currency"]) if v.get("currency") in CURRENCIES else 0
+        cur    = c4.selectbox("Devise", list(CURRENCIES.keys()), index=cur_idx, format_func=lambda k: CURRENCIES[k])
+        c5, c6 = st.columns(2)
+        if c5.form_submit_button("💾 Sauvegarder", use_container_width=True, type="primary"):
+            if "settings" not in st.session_state.data:
+                st.session_state.data["settings"] = {}
+            st.session_state.data["settings"]["voyage"] = {
+                "label": label.strip() or "Voyage",
+                "start": start.isoformat(), "end": end.isoformat(),
+                "budget": float(budget), "currency": cur,
+            }
+            save_data()
+            st.rerun()
+        if c6.form_submit_button("🗑️ Supprimer", use_container_width=True):
+            if "settings" in st.session_state.data:
+                st.session_state.data["settings"].pop("voyage", None)
+            save_data()
+            st.rerun()
+
+
+# ── Dépenses favorites ────────────────────────────────────────────────────────
+def get_favorites() -> list:
+    raw = _redis().get(f"favorites:{st.session_state.username}")
+    return json.loads(raw) if raw else []
+
+def save_favorites(favs: list) -> None:
+    _redis().set(f"favorites:{st.session_state.username}", json.dumps(favs, ensure_ascii=False))
+
+def render_favorites_bar() -> None:
+    favs = get_favorites()
+    if not favs:
+        return
+    st.markdown("**⭐ Favoris**")
+    n = min(len(favs), 3)
+    cols = st.columns(n)
+    for i, fav in enumerate(favs):
+        with cols[i % n]:
+            if st.button(f"{fav['label']}\n{fav['amount']:.2f} €", key=f"fav_{i}", use_container_width=True):
+                active_expenses().append({
+                    "date": date.today().isoformat(),
+                    "amount": float(fav["amount"]),
+                    "category": fav["category"],
+                    "description": fav.get("description") or fav["label"],
+                    "type": "expense",
+                })
+                save_data()
+                st.rerun()
+
+def _render_favorites_settings() -> None:
+    favs = get_favorites()
+    st.caption("Boutons 1 tap pour vos dépenses habituelles (cash, autre banque…)")
+    for i, fav in enumerate(favs):
+        c1, c2 = st.columns([5, 1])
+        c1.markdown(f"**{fav['label']}** — {fav['amount']:.2f} € · {fav['category']}")
+        if c2.button("✕", key=f"del_fav_{i}"):
+            favs.pop(i)
+            save_favorites(favs)
+            st.rerun()
+    with st.form("add_fav_form"):
+        c1, c2 = st.columns([3, 1])
+        fav_label = c1.text_input("Nom du bouton", placeholder="Café, Bus, Baguette…")
+        fav_amt   = c2.number_input("€", min_value=0.01, value=2.50, step=0.50, format="%.2f")
+        c3, c4    = st.columns(2)
+        fav_cat   = c3.selectbox("Catégorie", get_categories(), key="fav_cat")
+        fav_desc  = c4.text_input("Description", placeholder="laisser vide = nom")
+        if st.form_submit_button("➕ Ajouter", use_container_width=True) and fav_label.strip():
+            favs.append({"label": fav_label.strip(), "amount": float(fav_amt),
+                         "category": fav_cat, "description": fav_desc.strip()})
+            save_favorites(favs)
+            st.rerun()
+
+
 # ── Onglet Réglages ───────────────────────────────────────────────────────────
 def render_settings_tab() -> None:
     st.subheader("⚙️ Configuration du budget")
@@ -1746,6 +2021,12 @@ def render_settings_tab() -> None:
 
     with st.expander("💳 Solde bancaire"):
         _render_bank_balance_settings()
+
+    with st.expander("✈️ Mode voyage"):
+        _render_voyage_settings()
+
+    with st.expander("⭐ Dépenses favorites"):
+        _render_favorites_settings()
 
     with st.expander("🔔 Rappels paiements"):
         _render_reminders_sidebar()
@@ -1971,6 +2252,7 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
 
     # ── Onglet Budget ────────────────────────────────────────────────────────
     with tab_budget:
+        render_health_score(summary, df)
         render_metrics(summary)
         st.markdown("---")
 
@@ -1986,6 +2268,7 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
         else:
             render_budget_overview(summary, exp)
             st.markdown("---")
+            render_voyage_card(df)
             render_bank_balance_card()
             render_top_merchants(exp)
 
@@ -1998,6 +2281,7 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
     with tab_tx:
         render_expense_table(df)
         st.markdown("---")
+        render_favorites_bar()
         with st.expander("⚡ Ajout rapide", expanded=True):
             render_quick_add()
         st.markdown("---")
@@ -2020,6 +2304,8 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
         else:
             render_6month_trend()
             st.markdown("---")
+            with st.expander("🔮 Prévision par catégorie", expanded=True):
+                render_category_forecasts(exp, summary)
             with st.expander("📊 Graphiques détaillés", expanded=True):
                 render_charts(exp, summary)
             with st.expander("📆 Comparaison multi-mois"):
