@@ -153,6 +153,7 @@ def save_data() -> None:
     r.set(f"budget:{st.session_state.username}", json.dumps(st.session_state.data, ensure_ascii=False))
     r.set(f"mtime:{st.session_state.username}", str(time.time()))
     check_budget_alert()
+    check_daily_alert()
 
 def get_month_keys() -> list:
     return sorted([k for k in st.session_state.data if k not in ("recurring", "settings")], reverse=True)
@@ -247,6 +248,7 @@ def init_state() -> None:
     ensure_month(st.session_state.active_month)
     check_weekly_alerts()
     check_monthly_report()
+    check_daily_alert()
     check_payment_reminders()
     current_mtime = _data_mtime()
     if current_mtime > st.session_state.get("file_mtime", 0):
@@ -1095,6 +1097,45 @@ def check_budget_alert() -> None:
                     </div>"""
                 )
 
+def check_daily_alert() -> None:
+    if not get_notif_cfg().get("email"):
+        return
+    if st.session_state.active_month != current_month_key():
+        return
+    today_str = date.today().isoformat()
+    user = st.session_state.username
+    key  = f"daily_alert:{user}:{today_str}"
+    if _redis().get(key):
+        return
+    df = build_df()
+    if df.empty:
+        return
+    exp = expense_df(df)
+    today_exp = exp[exp["date"] == today_str]
+    if today_exp.empty:
+        return
+    today_total = float(today_exp["amount"].sum())
+    cfg = active_config()
+    daily_budget = float(cfg["monthly_budget"]) / max(int(cfg["days_in_month"]), 1)
+    if today_total <= daily_budget:
+        return
+    _redis().setex(key, 60 * 60 * 25, "1")
+    summary = compute_summary(cfg, df)
+    overage = today_total - daily_budget
+    send_email(
+        f"⚠️ Budget journalier dépassé — {today_str}",
+        f"""<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:20px">
+        <h2 style="color:#fd7e14">⚠️ Budget journalier dépassé</h2>
+        <p>Aujourd'hui tu as dépensé : <strong>{fmt(today_total)}</strong></p>
+        <p>Budget/jour : <strong>{fmt(daily_budget)}</strong>
+           · Dépassement : <strong style="color:#dc3545">+{fmt(overage)}</strong></p>
+        <p>Budget restant ce mois : <strong>{fmt(summary['budget_remaining'])}</strong>
+           pour {summary['days_remaining']} jour(s)</p>
+        <p>Nouveau budget/jour recommandé : <strong>{fmt(summary['daily_remaining'])}</strong></p>
+        </div>""",
+    )
+
+
 def check_weekly_alerts() -> None:
     if not get_notif_cfg().get("email"):
         return
@@ -1128,6 +1169,52 @@ def check_weekly_alerts() -> None:
         <h3>Top catégories :</h3><table>{cats_html}</table><hr>
         <p>Budget restant : <strong>{fmt(summary['budget_remaining'])}</strong> · {summary['days_remaining']} jours</p>
         </div>""")
+
+
+# ── Solde bancaire manuel ─────────────────────────────────────────────────────
+def get_bank_balance():
+    val = st.session_state.data.get("settings", {}).get("bank_balance")
+    return float(val) if val is not None else None
+
+def render_bank_balance_card() -> None:
+    bal = get_bank_balance()
+    if bal is None:
+        return
+    recurring = get_recurring()
+    total_rec = sum(float(r["amount"]) for r in recurring)
+    real_rem  = bal - total_rec
+    theme     = get_theme()
+    color     = "#22C55E" if real_rem >= 0 else "#dc3545"
+    st.markdown(f"""
+    <div class="budget-card">
+        <p class="card-label">💳 Solde bancaire réel</p>
+        <p class="big-daily" style="color:{theme};font-size:2rem;">{fmt(bal)}</p>
+        <p class="card-label">Après récurrents ({fmt(total_rec)}) :
+        <strong style="color:{color}">{fmt(real_rem)}</strong></p>
+    </div>""", unsafe_allow_html=True)
+
+def _render_bank_balance_settings() -> None:
+    bal = get_bank_balance()
+    st.caption("Saisissez votre solde réel pour voir ce qu'il reste après vos charges récurrentes.")
+    with st.form("bank_balance_form"):
+        new_bal = st.number_input(
+            "Solde actuel", min_value=0.0,
+            value=float(bal) if bal is not None else 0.0,
+            step=10.0, format="%.2f",
+        )
+        c1, c2 = st.columns(2)
+        if c1.form_submit_button("💾 Sauvegarder", use_container_width=True, type="primary"):
+            if "settings" not in st.session_state.data:
+                st.session_state.data["settings"] = {}
+            st.session_state.data["settings"]["bank_balance"] = new_bal if new_bal > 0 else None
+            save_data()
+            st.rerun()
+        if c2.form_submit_button("🗑️ Effacer", use_container_width=True):
+            if "settings" not in st.session_state.data:
+                st.session_state.data["settings"] = {}
+            st.session_state.data["settings"]["bank_balance"] = None
+            save_data()
+            st.rerun()
 
 
 # ── Objectif d'épargne ────────────────────────────────────────────────────────
@@ -1455,6 +1542,62 @@ def render_revolut_csv_import() -> None:
             st.rerun()
 
 
+# ── Export rapport HTML ───────────────────────────────────────────────────────
+def generate_html_report(df: pd.DataFrame, summary: dict) -> bytes:
+    month = st.session_state.active_month
+    label = month_label(month)
+    exp   = expense_df(df)
+    by_cat = exp.groupby("category")["amount"].sum().sort_values(ascending=False)
+    total  = summary["total_spent"]
+    rows_cat = "".join(
+        f"<tr><td>{c}</td><td>{a:.2f} €</td>"
+        f"<td>{a/total*100:.0f}%</td></tr>"
+        for c, a in by_cat.items()
+    ) if total > 0 else ""
+    rows_tx = "".join(
+        f"<tr><td>{e.get('date','')}</td><td>{e.get('description','')}</td>"
+        f"<td>{e.get('category','')}</td><td>{float(e.get('amount',0)):.2f} €</td></tr>"
+        for e in sorted(active_expenses(), key=lambda x: x.get("date", ""), reverse=True)
+        if e.get("type", "expense") == "expense"
+    )
+    saved = summary["budget"] - total
+    status = "✅ Sous budget" if saved >= 0 else "❌ Dépassement"
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Rapport {label}</title>
+<style>
+  body{{font-family:system-ui,sans-serif;max-width:700px;margin:auto;padding:24px;color:#111}}
+  h1{{color:#6366F1;margin-bottom:4px}}
+  h2{{color:#374151;margin-top:24px}}
+  table{{width:100%;border-collapse:collapse;margin-bottom:16px}}
+  th,td{{padding:8px 10px;text-align:left;border-bottom:1px solid #E5E7EB}}
+  th{{background:#F3F4F6;font-weight:600}}
+  tr:hover td{{background:#FAFAFA}}
+  .badge{{display:inline-block;padding:4px 10px;border-radius:8px;font-weight:600}}
+  .green{{background:#D1FAE5;color:#065F46}}
+  .red{{background:#FEE2E2;color:#991B1B}}
+</style></head><body>
+<h1>💶 {label}</h1>
+<p><span class="badge {'green' if saved>=0 else 'red'}">{status}</span></p>
+<h2>Résumé</h2>
+<table>
+  <tr><th>Budget mensuel</th><td>{summary['budget']:.2f} €</td></tr>
+  <tr><th>Total dépensé</th><td>{total:.2f} €</td></tr>
+  <tr><th>{'Économisé' if saved>=0 else 'Dépassement'}</th>
+      <td><strong>{abs(saved):.2f} €</strong></td></tr>
+  <tr><th>Jours restants</th><td>{summary['days_remaining']}</td></tr>
+</table>
+<h2>Par catégorie</h2>
+<table><tr><th>Catégorie</th><th>Montant</th><th>%</th></tr>{rows_cat}</table>
+<h2>Toutes les transactions</h2>
+<table><tr><th>Date</th><th>Description</th><th>Catégorie</th><th>Montant</th></tr>
+{rows_tx}</table>
+<p style="color:#9CA3AF;font-size:.8rem;margin-top:32px">
+  Généré le {date.today().strftime('%d/%m/%Y')} · Budget App
+</p>
+</body></html>"""
+    return html.encode("utf-8")
+
+
 # ── Évolution 6 mois ──────────────────────────────────────────────────────────
 def render_6month_trend() -> None:
     all_keys = get_month_keys()
@@ -1600,6 +1743,9 @@ def render_settings_tab() -> None:
 
     with st.expander("🎨 Thème"):
         _render_theme_sidebar()
+
+    with st.expander("💳 Solde bancaire"):
+        _render_bank_balance_settings()
 
     with st.expander("🔔 Rappels paiements"):
         _render_reminders_sidebar()
@@ -1840,6 +1986,7 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
         else:
             render_budget_overview(summary, exp)
             st.markdown("---")
+            render_bank_balance_card()
             render_top_merchants(exp)
 
         render_savings_goal(summary)
@@ -1857,6 +2004,14 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
         render_expense_form()
         render_csv_import()
         render_revolut_csv_import()
+        if not exp.empty:
+            st.download_button(
+                label="📄 Exporter le rapport HTML",
+                data=generate_html_report(df, summary),
+                file_name=f"rapport_{st.session_state.active_month}.html",
+                mime="text/html",
+                use_container_width=True,
+            )
 
     # ── Onglet Analyse ───────────────────────────────────────────────────────
     with tab_analyse:
