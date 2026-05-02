@@ -1758,27 +1758,48 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
 
     render_sidebar()
 
-    # Swipe entre tabs principaux uniquement (ignore les sous-tabs)
+    # Swipe entre tabs principaux — bloqué si le toucher démarre dans un sous-tab, graphique ou tableau
     components.html("""<script>
 (function(){
-    var startX=0, startY=0;
+    var startX=0, startY=0, blocked=false;
     function getMainTabs(){
         try{
-            // Prend uniquement le PREMIER tablist du document = tabs principaux
             var doc=window.parent.document;
-            var firstTablist=doc.querySelector('[role="tablist"]');
-            if(!firstTablist) return [];
-            return Array.from(firstTablist.querySelectorAll('button[role="tab"]'));
+            var first=doc.querySelector('[role="tablist"]');
+            if(!first) return [];
+            return Array.from(first.querySelectorAll('button[role="tab"]'));
         }catch(e){ return []; }
+    }
+    function isBlocked(target){
+        try{
+            var doc=window.parent.document;
+            var mainTablist=doc.querySelector('[role="tablist"]');
+            var el=target;
+            while(el && el!==doc.body){
+                if(el.getAttribute){
+                    var role=el.getAttribute('role');
+                    // Sous-tablist (pas le tablist principal)
+                    if(role==='tablist' && el!==mainTablist) return true;
+                    // Tableau scrollable
+                    if(el.getAttribute('data-testid')==='stDataFrame') return true;
+                    if(el.getAttribute('data-testid')==='stTable') return true;
+                }
+                // Graphique Plotly
+                if(el.classList && el.classList.contains('js-plotly-plot')) return true;
+                el=el.parentNode;
+            }
+        }catch(e){}
+        return false;
     }
     function onStart(e){
         startX=e.touches[0].clientX;
         startY=e.touches[0].clientY;
+        blocked=isBlocked(e.target);
     }
     function onEnd(e){
+        if(blocked) return;
         var dx=startX-e.changedTouches[0].clientX;
         var dy=startY-e.changedTouches[0].clientY;
-        // Ignore si trop court ou trop vertical
         if(Math.abs(dx)<70||Math.abs(dx)<Math.abs(dy)*2) return;
         var tabs=getMainTabs();
         var idx=tabs.findIndex(function(t){return t.getAttribute('aria-selected')==='true';});
