@@ -433,11 +433,11 @@ def _render_notif_sidebar() -> None:
     if cfg.get("email"):
         if st.button("📨 Email test", use_container_width=True, key="test_email"):
             with st.spinner("Connexion à Gmail… (max 15 s)"):
-                ok = send_email("✅ Test Budget App", "<h2>Ça fonctionne !</h2><p>Vos alertes email sont bien configurées.</p>")
+                ok, err = send_email("✅ Test Budget App", "<h2>Ça fonctionne !</h2><p>Vos alertes email sont bien configurées.</p>")
             if ok:
                 st.success("✅ Email envoyé !")
             else:
-                st.error("❌ Échec. Vérifiez : adresse Gmail, mot de passe d'application (pas votre vrai mdp Google), et que la validation en 2 étapes est activée.")
+                st.error(f"❌ Erreur : {err}")
 
 
 def _render_auto_rules_sidebar() -> None:
@@ -1018,32 +1018,34 @@ def save_notif_cfg(cfg: dict) -> None:
     st.session_state.data["settings"]["notifications"] = cfg
     save_data()
 
-def send_email(subject: str, html: str) -> bool:
+def send_email(subject: str, html: str) -> tuple[bool, str]:
     cfg = get_notif_cfg()
     to, gmail, pwd = cfg.get("email", ""), cfg.get("gmail", ""), cfg.get("app_password", "")
+    pwd = pwd.replace(" ", "")  # supprimer les espaces (Google affiche xxxx xxxx xxxx xxxx)
     if not all([to, gmail, pwd]):
-        return False
+        return False, "Champs manquants (email, gmail ou mot de passe)."
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = gmail
     msg["To"]      = to
     msg.attach(MIMEText(html, "html", "utf-8"))
+    err465 = ""
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as s:
             s.login(gmail, pwd)
             s.sendmail(gmail, to, msg.as_string())
-        return True
-    except Exception:
-        pass
+        return True, ""
+    except Exception as e:
+        err465 = str(e)
     try:
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
             s.ehlo()
             s.starttls()
             s.login(gmail, pwd)
             s.sendmail(gmail, to, msg.as_string())
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as e:
+        return False, f"Port 465: {err465} | Port 587: {e}"
 
 def check_budget_alert() -> None:
     if not get_notif_cfg().get("email"):
