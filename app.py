@@ -1645,33 +1645,88 @@ def main() -> None:
         return
 
     theme_color = get_theme()
+    active_key  = st.session_state.active_month
     st.markdown(f"""
 <style>
-    .big-daily {{ font-size:3.5rem; font-weight:800; text-align:center; margin:.3rem 0; line-height:1.1; }}
-    .card-label {{ text-align:center; color:#6c757d; font-size:.85rem; margin:0; }}
-    .budget-card {{ background:#f8f9fa; border-radius:14px; padding:1.5rem 1rem; margin:.5rem 0 1rem 0; }}
-    .cat-pill {{ padding:.35rem .8rem; border-radius:8px; margin:.2rem 0; font-size:.88rem; }}
-    .js-plotly-plot {{ border-radius:16px !important; box-shadow:0 2px 16px rgba(0,0,0,0.07); padding:4px; background:white; }}
-    .stButton > button[kind="primary"] {{ background: {theme_color} !important; border-color: {theme_color} !important; }}
-    .stProgress > div > div > div {{ background: {theme_color} !important; }}
-    @media (max-width: 640px) {{
-        .big-daily {{ font-size:2.2rem; }}
-        div[data-testid="stMetric"] {{ padding:.3rem .2rem; }}
-        div[data-testid="stMetricValue"] {{ font-size:1rem !important; }}
-        div[data-testid="stMetricLabel"] {{ font-size:.7rem !important; }}
-        section[data-testid="stSidebar"] {{ width:85vw !important; }}
-        .js-plotly-plot .main-svg {{ touch-action: pan-y !important; }}
-    }}
-</style>
-""", unsafe_allow_html=True)
+/* Masquer le chrome Streamlit */
+#MainMenu, footer {{ visibility:hidden; }}
+.stDeployButton {{ display:none !important; }}
 
-    active_key = st.session_state.active_month
-    st.title(f"💶 Budget Mensuel Intelligent — {month_label(active_key)}")
-    st.markdown("Suivez vos dépenses au quotidien et adaptez votre rythme automatiquement.")
+/* Fond doux */
+.stApp {{ background:#F0F2FF !important; }}
+
+/* Métriques en cartes */
+div[data-testid="stMetric"] {{
+    background:white; border-radius:16px;
+    padding:12px 14px !important;
+    box-shadow:0 2px 10px rgba(0,0,0,0.07);
+    border:1px solid #EBEBF5;
+}}
+div[data-testid="stMetricValue"] {{ font-size:1.1rem !important; font-weight:700 !important; }}
+div[data-testid="stMetricLabel"] {{ font-size:.65rem !important; color:#6B7280 !important; }}
+
+/* Bouton primaire gradient */
+.stButton > button[kind="primary"] {{
+    background:linear-gradient(135deg,{theme_color},{theme_color}BB) !important;
+    border:none !important; color:white !important;
+    border-radius:12px !important; font-weight:600 !important;
+    box-shadow:0 4px 14px {theme_color}44 !important;
+}}
+.stButton > button {{ border-radius:12px !important; }}
+
+/* Expanders en cartes */
+div[data-testid="stExpander"] {{
+    background:white !important; border-radius:16px !important;
+    border:1px solid #EBEBF5 !important;
+    box-shadow:0 1px 6px rgba(0,0,0,0.05) !important;
+    overflow:hidden !important; margin-bottom:6px !important;
+}}
+
+/* Barre de progression colorée */
+div[data-testid="stProgress"] > div > div {{ background:{theme_color} !important; }}
+
+/* Graphiques arrondis */
+.js-plotly-plot {{ border-radius:16px !important; box-shadow:0 2px 14px rgba(0,0,0,0.07) !important; background:white; }}
+
+/* Sidebar blanche */
+section[data-testid="stSidebar"] {{ background:white !important; box-shadow:2px 0 16px rgba(0,0,0,0.07) !important; }}
+
+/* Cards custom */
+.big-daily  {{ font-size:3.5rem; font-weight:800; text-align:center; margin:.3rem 0; line-height:1.1; }}
+.card-label {{ text-align:center; color:#6B7280; font-size:.85rem; margin:0; }}
+.budget-card {{ background:white; border-radius:18px; padding:1.5rem 1rem; margin:.5rem 0 1rem;
+    box-shadow:0 2px 10px rgba(0,0,0,0.07); }}
+.cat-pill {{ padding:.35rem .8rem; border-radius:8px; margin:.2rem 0; font-size:.88rem; }}
+
+/* En-tête gradient */
+.app-header {{
+    background:linear-gradient(135deg,{theme_color} 0%,{theme_color}99 100%);
+    border-radius:0 0 24px 24px; padding:18px 20px 22px;
+    margin:-4rem -4rem 1.2rem -4rem; color:white;
+    box-shadow:0 6px 24px {theme_color}44;
+}}
+.app-header h2 {{ font-size:1.2rem; font-weight:700; margin:0 0 2px; color:white !important; }}
+.app-header p  {{ font-size:.78rem; opacity:.85; margin:0; color:white !important; }}
+
+/* Mobile */
+@media (max-width:640px) {{
+    .app-header {{ padding:14px 16px 18px; margin:-1rem -1rem 1rem -1rem; border-radius:0 0 20px 20px; }}
+    .big-daily {{ font-size:2.2rem; }}
+    div[data-testid="stMetricValue"] {{ font-size:.95rem !important; }}
+    div[data-testid="stMetricLabel"] {{ font-size:.6rem !important; }}
+    section[data-testid="stSidebar"] {{ width:88vw !important; }}
+    .js-plotly-plot .main-svg {{ touch-action:pan-y !important; }}
+}}
+</style>
+<div class="app-header">
+  <h2>💶 Budget · {month_label(active_key)}</h2>
+  <p>Bonjour {st.session_state.username} · Jour {date.today().day} du mois</p>
+</div>
+""", unsafe_allow_html=True)
 
     render_sidebar()
     render_quick_add()
-    st.markdown("---")
+    st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
 
     df  = build_df()
     exp = expense_df(df)   # dépenses uniquement pour les graphiques/calculs
