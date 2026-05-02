@@ -13,6 +13,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import redis
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -1749,6 +1750,36 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
 """, unsafe_allow_html=True)
 
     render_sidebar()
+
+    # Swipe entre tabs sur mobile
+    components.html("""<script>
+(function(){
+    var startX=0, startY=0;
+    function getTabs(){
+        try{ return Array.from(window.parent.document.querySelectorAll('button[role="tab"]')); }
+        catch(e){ return []; }
+    }
+    function onStart(e){
+        var t=e.touches?e.touches[0]:e;
+        startX=t.clientX; startY=t.clientY;
+    }
+    function onEnd(e){
+        var t=e.changedTouches?e.changedTouches[0]:e;
+        var dx=startX-t.clientX, dy=startY-t.clientY;
+        if(Math.abs(dx)<60||Math.abs(dx)<Math.abs(dy)*1.5) return;
+        var tabs=getTabs();
+        var idx=tabs.findIndex(function(t){return t.getAttribute('aria-selected')==='true';});
+        if(idx===-1) return;
+        if(dx>0 && idx<tabs.length-1) tabs[idx+1].click();
+        else if(dx<0 && idx>0) tabs[idx-1].click();
+    }
+    try{
+        var doc=window.parent.document;
+        doc.addEventListener('touchstart',onStart,{passive:true});
+        doc.addEventListener('touchend',onEnd,{passive:true});
+    }catch(e){}
+})();
+</script>""", height=0)
 
     df      = build_df()
     exp     = expense_df(df)
