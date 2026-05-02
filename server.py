@@ -150,45 +150,63 @@ def _auto_categorize(username: str, description: str) -> str:
     return CATEGORIES_DEFAULT
 
 def _parse_revolut(text: str, title: str = ""):
-    # Normaliser les espaces Unicode (espace insécable, espace fine, etc.)
     def _norm(s):
         s = s.strip()
-        s = re.sub(r'[     ​﻿]', ' ', s)
-        return re.sub(r' +', ' ', s)
+        s = re.sub(r"[   ​﻿]", " ", s)
+        return re.sub(r" +", " ", s)
 
     text  = _norm(text)
     title = _norm(title)
 
-    patterns = [
-        # "payé 5.30 CHF (5.81€) a/à Starbucks" — devise étrangère
-        (r"pay[eé]\s+[\d\s,\.]+\s*\w+\s*\(?([\d,\.]+)\s*(?:€|EUR)\)?\s+(?:a|chez|à|at)\s+(.+)", 1, 2),
-        # "payé 1,50€ à/chez Starbucks" — format français standard
-        (r"pay[eé]\s+([\d\s,\.]+)\s*(?:€|EUR|eur)\s*(?:[·@]|chez|à|at|a)\s+(.+)", 1, 2),
-        # "paid €5.30 at Starbucks" — format anglais
-        (r"paid\s+(?:€|EUR)?\s*([\d,\.]+)\s*(?:€|EUR)?\s+(?:at|to|chez|à|a)\s+(.+)", 1, 2),
-        # "payment of 5.30€ to Starbucks"
-        (r"payment of\s+([\d,\.]+)\s*(?:€|EUR)\s+to\s+(.+)", 1, 2),
-        # fallback : premier nombre suivi de € puis texte
-        (r"([\d,\.]+)\s*(?:€|EUR)\s+(.+)", 1, 2),
-        # dernier recours : juste le montant (description = titre ou "Revolut")
-        (r"([\d,\.]+)\s*(?:€|EUR)", 1, None),
-    ]
-    for pattern, gi, gd in patterns:
-        m = re.search(pattern, text, re.IGNORECASE)
+    lines    = [l for l in (_norm(l) for l in text.splitlines()) if l]
+    flat     = " ".join(lines)
+    pay_line = next((l for l in lines if re.search(r"pay[eé]|paid|payment", l, re.IGNORECASE)), flat)
+
+    # Extraire le montant EUR
+    amt = None
+    for p in [
+        r"\(\s*([\d,\.]+)\s*(?:€|EUR)\s*\)",   # (5,81 €)
+        r"pay[eé]\s+([\d\s,\.]+)\s*(?:€|EUR)",  # payé 5,81 €
+        r"paid\s+(?:€|EUR)?\s*([\d,\.]+)",         # paid 5.81
+        r"([\d,\.]+)\s*(?:€|EUR)",                  # fallback
+    ]:
+        m = re.search(p, pay_line, re.IGNORECASE)
         if m:
             try:
-                amt = round(float(m.group(gi).replace(" ", "").replace(",", ".")), 2)
-                if amt <= 0:
-                    continue
-                if gd is not None:
-                    desc = m.group(gd).strip().rstrip(".")
-                else:
-                    desc = title if title else "Revolut"
-                return amt, desc or (title if title else "Revolut")
-            except (ValueError, IndexError):
+                v = round(float(m.group(1).replace(" ", "").replace(",", ".")), 2)
+                if v > 0:
+                    amt = v
+                    break
+            except ValueError:
                 continue
-    return None, None
 
+    if amt is None:
+        return None, None
+
+    # Extraire le marchand
+    merchant = ""
+    if title and not re.match(r"^com\.", title) and title.lower() not in ("revolut", ""):
+        merchant = title
+    else:
+        pay_idx = next((i for i, l in enumerate(lines)
+                        if re.search(r"pay[eé]|paid", l, re.IGNORECASE)), -1)
+        if pay_idx > 0:
+            merchant = lines[pay_idx - 1]
+        else:
+            for l in reversed(lines):
+                if not re.search(r"solde|balance|eur\s*:|chf\s*:|usd\s*:", l, re.IGNORECASE) and not re.search(r"pay[eé]|paid|payment", l, re.IGNORECASE):
+                    merchant = l
+                    break
+
+    # Fallback: marchand inline apres a/chez/at sur la meme ligne
+    if not merchant:
+        m = re.search(r"(?:à|chez|at|to)\s+(.+)", pay_line, re.IGNORECASE)
+        if m:
+            candidate = m.group(1).strip().rstrip(".")
+            if not re.search(r"solde|balance|€|eur\s*:", candidate, re.IGNORECASE):
+                merchant = candidate
+    desc = merchant.strip().rstrip(".") if merchant else "Revolut"
+    return amt, desc or "Revolut"
 
 # ── Proxy WebSocket → Streamlit ───────────────────────────────────────────────
 @app.websocket("/{path:path}")
