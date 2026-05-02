@@ -1653,7 +1653,8 @@ def main() -> None:
 .stDeployButton {{ display:none !important; }}
 
 /* Fond doux */
-.stApp {{ background:#F0F2FF !important; }}
+.stApp {{ background:#F7F8FF !important; }}
+.block-container {{ color:#111827 !important; }}
 
 /* Métriques en cartes */
 div[data-testid="stMetric"] {{
@@ -1701,16 +1702,16 @@ section[data-testid="stSidebar"] {{ background:white !important; box-shadow:2px 
 /* En-tête gradient */
 .app-header {{
     background:linear-gradient(135deg,{theme_color} 0%,{theme_color}99 100%);
-    border-radius:0 0 24px 24px; padding:18px 20px 22px;
-    margin:-4rem -4rem 1.2rem -4rem; color:white;
+    border-radius:16px; padding:18px 20px 20px;
+    margin:0 0 1rem 0; color:white;
     box-shadow:0 6px 24px {theme_color}44;
 }}
 .app-header h2 {{ font-size:1.2rem; font-weight:700; margin:0 0 2px; color:white !important; }}
-.app-header p  {{ font-size:.78rem; opacity:.85; margin:0; color:white !important; }}
+.app-header p  {{ font-size:.78rem; opacity:.9; margin:0; color:rgba(255,255,255,0.9) !important; }}
 
 /* Mobile */
 @media (max-width:640px) {{
-    .app-header {{ padding:14px 16px 18px; margin:-1rem -1rem 1rem -1rem; border-radius:0 0 20px 20px; }}
+    .app-header {{ padding:14px 16px 18px; border-radius:14px; }}
     .big-daily {{ font-size:2.2rem; }}
     div[data-testid="stMetricValue"] {{ font-size:.95rem !important; }}
     div[data-testid="stMetricLabel"] {{ font-size:.6rem !important; }}
