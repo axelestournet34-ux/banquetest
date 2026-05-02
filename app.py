@@ -141,7 +141,7 @@ def render_auth_page() -> None:
                     if err:
                         st.error(err)
                     else:
-                        st.success("Compte créé ! Connectez-vous dans l'onglet ci-contre.")
+                        st.info("Compte créé ! Connectez-vous dans l'onglet ci-contre.")
 
 
 # ── Persistance ───────────────────────────────────────────────────────────────
@@ -551,7 +551,6 @@ def _render_notif_sidebar() -> None:
                                   help="Compte Google → Sécurité → Mots de passe des applications")
         if st.form_submit_button("💾 Sauvegarder", use_container_width=True):
             save_notif_cfg({"email": email.strip(), "gmail": gmail.strip(), "app_password": app_pwd})
-            st.success("✓ Sauvegardé !")
     if cfg.get("email"):
         if st.button("📨 Email test", use_container_width=True, key="test_email"):
             with st.spinner("Connexion à Gmail… (max 15 s)"):
@@ -594,7 +593,6 @@ def _render_savings_goal_sidebar() -> None:
                 st.session_state.data["settings"] = {}
             st.session_state.data["settings"]["savings_goal"] = {"label": label, "target": target}
             save_data()
-            st.success("✓ Objectif mis à jour !")
 
 
 # ── Sidebar : catégories personnalisées ──────────────────────────────────────
@@ -659,8 +657,6 @@ def render_quick_add() -> None:
             "type": "income" if is_income else "expense",
         })
         save_data()
-        label = "revenu enregistré" if is_income else f"ajouté — {cat}"
-        st.success(f"✅ {amt:.2f} € {label}")
         st.rerun()
 
 
@@ -686,8 +682,6 @@ def render_expense_form() -> None:
                 "type": "income" if is_income else "expense",
             })
             save_data()
-            label = "revenu enregistré" if is_income else f"ajouté dans *{category}*"
-            st.success(f"**{fmt(amount)}** {label} !")
 
 
 # ── Import CSV ────────────────────────────────────────────────────────────────
@@ -867,7 +861,6 @@ def render_expense_table(df: pd.DataFrame) -> None:
         edited["amount"] = edited["amount"].astype(float)
         st.session_state.data[st.session_state.active_month]["expenses"] = edited.to_dict("records")
         save_data()
-        st.success("✅ Modifications sauvegardées !")
         st.rerun()
 
     c_info.caption(
@@ -1304,7 +1297,6 @@ def _render_reminders_sidebar() -> None:
                 st.session_state.data["settings"] = {}
             st.session_state.data["settings"]["reminder_days"] = int(days)
             save_data()
-            st.success(f"✓ Rappel {int(days)} jours avant configuré !")
 
 
 # ── Gamification ─────────────────────────────────────────────────────────────
@@ -1789,7 +1781,6 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 16px rgba(0,0,0,0.07) !impo
                                           "amount": s["avg_amount"], "category": cat})
                         st.session_state.data["recurring"] = recurring
                         save_data()
-                        st.success(f"'{s['description'].title()}' ajouté aux récurrents !")
                         st.rerun()
 
 
