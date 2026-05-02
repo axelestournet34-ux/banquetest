@@ -1652,19 +1652,16 @@ def main() -> None:
 #MainMenu, footer {{ visibility:hidden; }}
 .stDeployButton {{ display:none !important; }}
 
-/* Fond doux */
-.stApp {{ background:#F7F8FF !important; }}
-.block-container {{ color:#111827 !important; }}
 
-/* Métriques en cartes */
+/* Métriques arrondies */
 div[data-testid="stMetric"] {{
-    background:white; border-radius:16px;
+    border-radius:16px;
     padding:12px 14px !important;
     box-shadow:0 2px 10px rgba(0,0,0,0.07);
     border:1px solid #EBEBF5;
 }}
 div[data-testid="stMetricValue"] {{ font-size:1.1rem !important; font-weight:700 !important; }}
-div[data-testid="stMetricLabel"] {{ font-size:.65rem !important; color:#6B7280 !important; }}
+div[data-testid="stMetricLabel"] {{ font-size:.65rem !important; }}
 
 /* Bouton primaire gradient */
 .stButton > button[kind="primary"] {{
@@ -1675,9 +1672,9 @@ div[data-testid="stMetricLabel"] {{ font-size:.65rem !important; color:#6B7280 !
 }}
 .stButton > button {{ border-radius:12px !important; }}
 
-/* Expanders en cartes */
+/* Expanders arrondis */
 div[data-testid="stExpander"] {{
-    background:white !important; border-radius:16px !important;
+    border-radius:16px !important;
     border:1px solid #EBEBF5 !important;
     box-shadow:0 1px 6px rgba(0,0,0,0.05) !important;
     overflow:hidden !important; margin-bottom:6px !important;
@@ -1689,8 +1686,8 @@ div[data-testid="stProgress"] > div > div {{ background:{theme_color} !important
 /* Graphiques arrondis */
 .js-plotly-plot {{ border-radius:16px !important; box-shadow:0 2px 14px rgba(0,0,0,0.07) !important; background:white; }}
 
-/* Sidebar blanche */
-section[data-testid="stSidebar"] {{ background:white !important; box-shadow:2px 0 16px rgba(0,0,0,0.07) !important; }}
+/* Sidebar ombre */
+section[data-testid="stSidebar"] {{ box-shadow:2px 0 16px rgba(0,0,0,0.07) !important; }}
 
 /* Cards custom */
 .big-daily  {{ font-size:3.5rem; font-weight:800; text-align:center; margin:.3rem 0; line-height:1.1; }}
