@@ -705,6 +705,33 @@ def render_status_card(summary: dict, df: pd.DataFrame) -> None:
             )
 
 
+# ── Détail par catégorie ──────────────────────────────────────────────────────
+def render_category_breakdown(df: pd.DataFrame, summary: dict) -> None:
+    if df.empty:
+        return
+    by_cat = df.groupby("category")["amount"].sum().sort_values(ascending=False)
+    budget = summary["budget"]
+    theme  = get_theme()
+    st.markdown("**📂 Dépenses par catégorie**")
+    for cat, total in by_cat.items():
+        pct = total / budget if budget > 0 else 0
+        bar_color = "#EF4444" if pct > 0.3 else theme
+        st.markdown(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:.5rem .2rem;border-bottom:1px solid #F0F0F8;">'
+            f'<span style="font-size:.95rem">{cat}</span>'
+            f'<strong style="font-size:.95rem;color:{bar_color}">{fmt(total)}</strong>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        f'<div style="display:flex;justify-content:space-between;padding:.6rem .2rem;">'
+        f'<strong>Total dépensé</strong>'
+        f'<strong style="color:{theme}">{fmt(by_cat.sum())}</strong></div>',
+        unsafe_allow_html=True,
+    )
+
+
 # ── Top 5 marchands ───────────────────────────────────────────────────────────
 def render_top_merchants(df: pd.DataFrame) -> None:
     if df.empty:
@@ -1793,10 +1820,6 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
 
     # ── Onglet Budget ────────────────────────────────────────────────────────
     with tab_budget:
-        with st.expander("⚡ Ajout rapide", expanded=True):
-            render_quick_add()
-
-        st.markdown('<div style="height:4px"></div>', unsafe_allow_html=True)
         render_metrics(summary)
         st.markdown("---")
 
@@ -1812,6 +1835,8 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
         else:
             render_status_card(summary, exp)
             st.markdown("---")
+            render_category_breakdown(exp, summary)
+            st.markdown("---")
             render_top_merchants(exp)
 
         render_savings_goal(summary)
@@ -1821,6 +1846,9 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
 
     # ── Onglet Transactions ──────────────────────────────────────────────────
     with tab_tx:
+        with st.expander("⚡ Ajout rapide", expanded=True):
+            render_quick_add()
+        st.markdown("---")
         render_expense_form()
         st.markdown("---")
         render_expense_table(df)
