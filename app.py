@@ -1758,23 +1758,29 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
 
     render_sidebar()
 
-    # Swipe entre tabs sur mobile
+    # Swipe entre tabs principaux uniquement (ignore les sous-tabs)
     components.html("""<script>
 (function(){
     var startX=0, startY=0;
-    function getTabs(){
-        try{ return Array.from(window.parent.document.querySelectorAll('button[role="tab"]')); }
-        catch(e){ return []; }
+    function getMainTabs(){
+        try{
+            // Prend uniquement le PREMIER tablist du document = tabs principaux
+            var doc=window.parent.document;
+            var firstTablist=doc.querySelector('[role="tablist"]');
+            if(!firstTablist) return [];
+            return Array.from(firstTablist.querySelectorAll('button[role="tab"]'));
+        }catch(e){ return []; }
     }
     function onStart(e){
-        var t=e.touches?e.touches[0]:e;
-        startX=t.clientX; startY=t.clientY;
+        startX=e.touches[0].clientX;
+        startY=e.touches[0].clientY;
     }
     function onEnd(e){
-        var t=e.changedTouches?e.changedTouches[0]:e;
-        var dx=startX-t.clientX, dy=startY-t.clientY;
-        if(Math.abs(dx)<60||Math.abs(dx)<Math.abs(dy)*1.5) return;
-        var tabs=getTabs();
+        var dx=startX-e.changedTouches[0].clientX;
+        var dy=startY-e.changedTouches[0].clientY;
+        // Ignore si trop court ou trop vertical
+        if(Math.abs(dx)<70||Math.abs(dx)<Math.abs(dy)*2) return;
+        var tabs=getMainTabs();
         var idx=tabs.findIndex(function(t){return t.getAttribute('aria-selected')==='true';});
         if(idx===-1) return;
         if(dx>0 && idx<tabs.length-1) tabs[idx+1].click();
