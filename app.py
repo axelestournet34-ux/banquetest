@@ -657,11 +657,11 @@ def render_metrics(summary: dict) -> None:
 
 
 # ── Carte de statut ───────────────────────────────────────────────────────────
-def render_status_card(summary: dict, df: pd.DataFrame) -> None:
-    st.subheader("📊 État du budget")
+def render_budget_overview(summary: dict, df: pd.DataFrame) -> None:
     status, message = get_status(summary["difference"])
     color_map = {"green": "#28a745", "orange": "#fd7e14", "red": "#dc3545"}
     color_hex = color_map[status]
+    theme = get_theme()
 
     if status == "green":
         st.success(message)
@@ -670,66 +670,41 @@ def render_status_card(summary: dict, df: pd.DataFrame) -> None:
     else:
         st.error(message)
 
-    st.markdown(f"""
-    <div class="budget-card">
-        <p class="card-label">Budget quotidien restant</p>
-        <p class="big-daily" style="color:{color_hex};">{fmt(summary['daily_remaining'])}</p>
-        <p class="card-label">pour les <strong>{summary['days_remaining']}</strong> jours restants</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    diff = summary["difference"]
-    sign = "+" if diff >= 0 else ""
-    forecast_ok = summary["forecast_total"] <= summary["budget"]
-    sym = CURRENCY_SYMBOLS.get(get_currency(), "€")
-    st.markdown(f"""
-| Indicateur | Valeur |
-|---|---|
-| Rythme idéal à ce jour | {fmt(summary['ideal_spent'])} |
-| Réellement dépensé | {fmt(summary['total_spent'])} |
-| Écart | **{sign}{diff:.2f} {sym}** |
-| Moyenne/jour | {fmt(summary['avg_daily'])}/j |
-| Prévision fin de mois | **{fmt(summary['forecast_total'])}** {'✅' if forecast_ok else '⚠️'} |
-    """)
-
-    alerts = get_category_alerts(df, active_cat_budgets())
-    if alerts:
-        st.markdown("**⚠️ Alertes enveloppes :**")
-        for cat, (color, spent, limit, pct) in alerts.items():
-            bg = "#fff3cd" if color == "orange" else "#f8d7da"
-            border = "#fd7e14" if color == "orange" else "#dc3545"
-            st.markdown(
-                f'<div class="cat-pill" style="background:{bg};border-left:4px solid {border};">'
-                f'{cat} — {fmt(spent)} / {fmt(limit)} ({pct*100:.0f}%)</div>',
-                unsafe_allow_html=True,
-            )
-
-
-# ── Détail par catégorie ──────────────────────────────────────────────────────
-def render_category_breakdown(df: pd.DataFrame, summary: dict) -> None:
-    if df.empty:
-        return
+    # Carte principale : budget/jour restant + catégories fusionnées
     by_cat = df.groupby("category")["amount"].sum().sort_values(ascending=False)
     budget = summary["budget"]
-    theme  = get_theme()
-    st.markdown("**📂 Dépenses par catégorie**")
+    alerts = get_category_alerts(df, active_cat_budgets())
+
+    rows_html = ""
     for cat, total in by_cat.items():
         pct = total / budget if budget > 0 else 0
-        bar_color = "#EF4444" if pct > 0.3 else theme
-        st.markdown(
-            f'<div style="display:flex;justify-content:space-between;align-items:center;'
-            f'padding:.5rem .2rem;border-bottom:1px solid #F0F0F8;">'
-            f'<span style="font-size:.95rem">{cat}</span>'
-            f'<strong style="font-size:.95rem;color:{bar_color}">{fmt(total)}</strong>'
-            f'</div>',
-            unsafe_allow_html=True,
+        alert = alerts.get(cat)
+        if alert:
+            amt_color = "#dc3545" if alert[0] == "red" else "#fd7e14"
+            badge = " ⚠️" if alert[0] == "orange" else " 🔴"
+        else:
+            amt_color = "#374151"
+            badge = ""
+        rows_html += (
+            f'<div style="display:flex;justify-content:space-between;'
+            f'padding:.45rem 0;border-bottom:1px solid #F5F5FA;">'
+            f'<span style="font-size:.9rem">{cat}{badge}</span>'
+            f'<strong style="font-size:.9rem;color:{amt_color}">{fmt(total)}</strong>'
+            f'</div>'
         )
-    st.markdown(
-        f'<div style="display:flex;justify-content:space-between;padding:.6rem .2rem;">'
-        f'<strong>Total dépensé</strong>'
-        f'<strong style="color:{theme}">{fmt(by_cat.sum())}</strong></div>',
-        unsafe_allow_html=True,
-    )
+
+    forecast_ok = summary["forecast_total"] <= budget
+    st.markdown(f"""
+    <div class="budget-card">
+        <p class="card-label">Budget/jour restant</p>
+        <p class="big-daily" style="color:{color_hex};">{fmt(summary['daily_remaining'])}</p>
+        <p class="card-label">{summary['days_remaining']} jours · prévision {fmt(summary['forecast_total'])} {'✅' if forecast_ok else '⚠️'}</p>
+        <div style="margin-top:1rem">{rows_html}</div>
+        <div style="display:flex;justify-content:space-between;padding:.5rem 0;margin-top:.2rem;">
+            <strong>Total dépensé</strong>
+            <strong style="color:{color_hex}">{fmt(summary['total_spent'])} / {fmt(budget)}</strong>
+        </div>
+    </div>""", unsafe_allow_html=True)
 
 
 # ── Top 5 marchands ───────────────────────────────────────────────────────────
@@ -1833,9 +1808,7 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
             </div>""", unsafe_allow_html=True)
             st.info("Ajoutez vos premières dépenses pour voir votre budget en temps réel.")
         else:
-            render_status_card(summary, exp)
-            st.markdown("---")
-            render_category_breakdown(exp, summary)
+            render_budget_overview(summary, exp)
             st.markdown("---")
             render_top_merchants(exp)
 
