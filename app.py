@@ -1828,12 +1828,12 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
 
     # ── Onglet Transactions ──────────────────────────────────────────────────
     with tab_tx:
+        render_expense_table(df)
+        st.markdown("---")
         with st.expander("⚡ Ajout rapide", expanded=True):
             render_quick_add()
         st.markdown("---")
         render_expense_form()
-        st.markdown("---")
-        render_expense_table(df)
         render_csv_import()
         render_revolut_csv_import()
 
