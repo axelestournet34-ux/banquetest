@@ -1722,7 +1722,6 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 16px rgba(0,0,0,0.07) !impo
     exp = expense_df(df)   # dépenses uniquement pour les graphiques/calculs
     summary = compute_summary(active_config(), df)
     render_metrics(summary)
-    render_gamification(summary, exp)
     st.markdown("---")
 
     if exp.empty:
