@@ -1258,10 +1258,11 @@ def render_calendar(df: pd.DataFrame) -> None:
             bg = f"rgba({r},{g},{b},{intensity*0.85:.2f})" if amt > 0 else "#F9FAFB"
             tc = "white" if intensity > 0.45 else "#374151"
             bd = f"2px solid {theme}" if day == today_d else "1px solid #E5E7EB"
+            amt_html = f'<div style="font-size:9px">{amt:.0f}€</div>' if amt > 0 else ""
             html += (f'<div style="background:{bg};color:{tc};border:{bd};border-radius:8px;'
                      f'padding:5px 2px;text-align:center;min-height:44px;">'
                      f'<div style="font-size:11px;font-weight:600">{day}</div>'
-                     f'{"<div style=\'font-size:9px\'>"+f\"{amt:.0f}€\"+\"</div>\" if amt > 0 else ""}'
+                     f'{amt_html}'
                      f"</div>")
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
