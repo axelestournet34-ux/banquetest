@@ -810,12 +810,12 @@ def render_expense_table(df: pd.DataFrame) -> None:
 
 # ── Graphiques ────────────────────────────────────────────────────────────────
 _PALETTE = ["#6366F1","#22D3EE","#F59E0B","#10B981","#F43F5E","#A78BFA","#FB923C","#34D399","#60A5FA","#E879F9","#FBBF24"]
-_CFG     = {"scrollZoom": False, "displayModeBar": False, "doubleClick": False}
+_CFG     = {"scrollZoom": False, "displayModeBar": False, "doubleClick": False, "staticPlot": True}
 _LAYOUT  = dict(
     plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Inter,system-ui,sans-serif", size=13, color="#374151"),
-    margin=dict(l=8, r=8, t=44, b=8),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5, font_size=12),
+    font=dict(family="Inter,system-ui,sans-serif", size=12, color="#374151"),
+    margin=dict(l=8, r=8, t=52, b=48),
+    legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5, font_size=11),
     hoverlabel=dict(bgcolor="white", font_size=13, bordercolor="#E5E7EB"),
 )
 
