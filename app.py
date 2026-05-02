@@ -670,41 +670,44 @@ def render_budget_overview(summary: dict, df: pd.DataFrame) -> None:
     else:
         st.error(message)
 
-    # Carte principale : budget/jour restant + catégories fusionnées
-    by_cat = df.groupby("category")["amount"].sum().sort_values(ascending=False)
-    budget = summary["budget"]
-    alerts = get_category_alerts(df, active_cat_budgets())
-
-    rows_html = ""
-    for cat, total in by_cat.items():
-        pct = total / budget if budget > 0 else 0
-        alert = alerts.get(cat)
-        if alert:
-            amt_color = "#dc3545" if alert[0] == "red" else "#fd7e14"
-            badge = " ⚠️" if alert[0] == "orange" else " 🔴"
-        else:
-            amt_color = "#374151"
-            badge = ""
-        rows_html += (
-            f'<div style="display:flex;justify-content:space-between;'
-            f'padding:.45rem 0;border-bottom:1px solid #F5F5FA;">'
-            f'<span style="font-size:.9rem">{cat}{badge}</span>'
-            f'<strong style="font-size:.9rem;color:{amt_color}">{fmt(total)}</strong>'
-            f'</div>'
-        )
-
-    forecast_ok = summary["forecast_total"] <= budget
+    # Carte : budget/jour + prévision
+    forecast_ok = summary["forecast_total"] <= summary["budget"]
     st.markdown(f"""
     <div class="budget-card">
         <p class="card-label">Budget/jour restant</p>
         <p class="big-daily" style="color:{color_hex};">{fmt(summary['daily_remaining'])}</p>
-        <p class="card-label">{summary['days_remaining']} jours · prévision {fmt(summary['forecast_total'])} {'✅' if forecast_ok else '⚠️'}</p>
-        <div style="margin-top:1rem">{rows_html}</div>
-        <div style="display:flex;justify-content:space-between;padding:.5rem 0;margin-top:.2rem;">
-            <strong>Total dépensé</strong>
-            <strong style="color:{color_hex}">{fmt(summary['total_spent'])} / {fmt(budget)}</strong>
-        </div>
+        <p class="card-label">{summary['days_remaining']} jours restants · prévision <strong>{fmt(summary['forecast_total'])}</strong> {'✅' if forecast_ok else '⚠️'}</p>
     </div>""", unsafe_allow_html=True)
+
+    # Détail par catégorie
+    by_cat = df.groupby("category")["amount"].sum().sort_values(ascending=False)
+    budget = summary["budget"]
+    alerts = get_category_alerts(df, active_cat_budgets())
+
+    st.markdown("**📂 Dépenses par catégorie**")
+    for cat, total in by_cat.items():
+        alert = alerts.get(cat)
+        if alert:
+            amt_color = "#dc3545" if alert[0] == "red" else "#fd7e14"
+            badge = " 🔴" if alert[0] == "red" else " ⚠️"
+        else:
+            amt_color = theme
+            badge = ""
+        st.markdown(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:.5rem 0;border-bottom:1px solid #F5F5FA;">'
+            f'<span style="font-size:.92rem">{cat}{badge}</span>'
+            f'<strong style="font-size:.92rem;color:{amt_color}">{fmt(total)}</strong>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(
+        f'<div style="display:flex;justify-content:space-between;padding:.6rem 0;margin-top:.2rem;">'
+        f'<strong>Total</strong>'
+        f'<strong style="color:{color_hex}">{fmt(summary["total_spent"])} / {fmt(budget)}</strong>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ── Top 5 marchands ───────────────────────────────────────────────────────────
