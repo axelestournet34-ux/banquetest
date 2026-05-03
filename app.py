@@ -154,6 +154,8 @@ def save_data() -> None:
     r.set(f"mtime:{st.session_state.username}", str(time.time()))
     check_budget_alert()
     check_daily_alert()
+    st.session_state["_just_added"] = True
+    _check_unusual_expense()
 
 def get_month_keys() -> list:
     return sorted([k for k in st.session_state.data if k not in ("recurring", "settings")], reverse=True)
@@ -580,9 +582,38 @@ def render_expense_form() -> None:
 
 
 # ── Import CSV ────────────────────────────────────────────────────────────────
+_CSV_PRESETS = {
+    "Générique": {},
+    "Banque Populaire / Crédit Mutuel": {
+        "date": ["Date", "Date de l'opération", "date"],
+        "amt":  ["Débit", "Montant", "DEBIT", "débit"],
+        "desc": ["Libellé", "Libelle", "LIBELLE"],
+        "abs":  True,
+    },
+    "BNP / Société Générale": {
+        "date": ["Date", "dateOp", "dateVal"],
+        "amt":  ["Montant", "montant", "Debit"],
+        "desc": ["label", "Libellé", "libelle"],
+        "abs":  True,
+    },
+    "Revolut (générique)": {
+        "date": ["Completed Date", "Date"],
+        "amt":  ["Amount", "Montant"],
+        "desc": ["Description"],
+        "abs":  False,
+    },
+}
+
+def _best_col(cols: list, candidates: list) -> str:
+    for c in candidates:
+        if c in cols:
+            return c
+    return cols[0]
+
 def render_csv_import() -> None:
     with st.expander("📥 Importer depuis un CSV bancaire"):
-        st.caption("Colonnes attendues : date, montant, description (noms flexibles)")
+        preset_name = st.selectbox("Banque", list(_CSV_PRESETS.keys()), key="csv_preset")
+        preset = _CSV_PRESETS[preset_name]
         uploaded = st.file_uploader("Fichier CSV", type=["csv"],
                                     label_visibility="collapsed", key="csv_uploader")
         if uploaded is None:
@@ -596,9 +627,15 @@ def render_csv_import() -> None:
         st.dataframe(df_raw.head(3), use_container_width=True)
         cols = list(df_raw.columns)
         c1, c2, c3 = st.columns(3)
-        col_date = c1.selectbox("Colonne date", cols, key="csv_col_date")
-        col_amt  = c2.selectbox("Colonne montant", cols, key="csv_col_amt")
-        col_desc = c3.selectbox("Colonne description", ["— aucune —"] + cols, key="csv_col_desc")
+        def_date = _best_col(cols, preset.get("date", cols)) if preset else cols[0]
+        def_amt  = _best_col(cols, preset.get("amt",  cols)) if preset else cols[0]
+        def_desc = _best_col(cols, preset.get("desc", cols)) if preset else cols[0]
+        col_date = c1.selectbox("Colonne date",        cols, index=cols.index(def_date), key="csv_col_date")
+        col_amt  = c2.selectbox("Colonne montant",     cols, index=cols.index(def_amt),  key="csv_col_amt")
+        col_desc = c3.selectbox("Colonne description", ["— aucune —"] + cols,
+                                index=(["— aucune —"] + cols).index(def_desc) if def_desc in cols else 0,
+                                key="csv_col_desc")
+        abs_amt     = st.checkbox("Prendre la valeur absolue du montant", value=preset.get("abs", False), key="csv_abs")
         default_cat = st.selectbox("Catégorie par défaut", get_categories(), key="csv_default_cat")
 
         if st.button("✅ Importer", use_container_width=True, key="csv_do_import"):
@@ -609,6 +646,8 @@ def render_csv_import() -> None:
                                .replace(",", ".").replace(" ", "")
                                .replace("€", "").replace("\xa0", ""))
                     amt = float(raw_amt)
+                    if abs_amt:
+                        amt = abs(amt)
                     if amt <= 0:
                         skipped += 1
                         continue
@@ -1751,6 +1790,210 @@ def render_month_comparison() -> None:
     st.dataframe(df_comp, use_container_width=True, hide_index=True)
 
 
+# ── Dépense anormale ──────────────────────────────────────────────────────────
+def _check_unusual_expense() -> None:
+    if not get_notif_cfg().get("email"):
+        return
+    expenses = active_expenses()
+    if not expenses:
+        return
+    last = expenses[-1]
+    if last.get("type", "expense") != "expense":
+        return
+    amount = float(last.get("amount", 0))
+    desc   = last.get("description", "").strip()
+    if not desc or desc == "—" or amount <= 0:
+        return
+    hist = [float(e["amount"]) for mk in get_month_keys()
+            for e in st.session_state.data.get(mk, {}).get("expenses", [])
+            if e.get("description", "").strip().lower() == desc.lower()
+            and e.get("type", "expense") == "expense"]
+    if len(hist) < 3:
+        return
+    avg = sum(hist) / len(hist)
+    if avg <= 0 or amount <= avg * 3:
+        return
+    user = st.session_state.username
+    key  = f"unusual:{user}:{date.today().isoformat()}:{desc[:20]}"
+    if _redis().get(key):
+        return
+    _redis().setex(key, 60 * 60 * 24, "1")
+    send_email(
+        f"⚠️ Dépense inhabituelle — {desc}",
+        f"""<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:20px">
+        <h2 style="color:#F59E0B">⚠️ Dépense inhabituelle détectée</h2>
+        <p>Marchand : <strong>{desc}</strong></p>
+        <p>Montant : <strong style="color:#dc3545">{amount:.2f} €</strong></p>
+        <p>Ta moyenne habituelle chez ce marchand : <strong>{avg:.2f} €</strong>
+           (×{amount/avg:.1f} la normale)</p>
+        </div>""",
+    )
+
+
+# ── Habitudes de dépense ──────────────────────────────────────────────────────
+def render_spending_habits(df: pd.DataFrame) -> None:
+    exp = expense_df(df)
+    if len(exp) < 5:
+        st.info("Pas assez de données (min. 5 dépenses).")
+        return
+    df_h = exp.copy()
+    df_h["dt"]      = pd.to_datetime(df_h["date"])
+    df_h["weekday"] = df_h["dt"].dt.dayofweek          # 0=lun … 6=dim
+    df_h["is_we"]   = df_h["weekday"] >= 5
+    day_labels = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+    by_day = df_h.groupby("weekday")["amount"].sum().reindex(range(7), fill_value=0)
+    theme  = get_theme()
+    # Weekend vs semaine
+    we_avg  = df_h[df_h["is_we"]]["amount"].mean() if df_h["is_we"].any() else 0
+    wd_avg  = df_h[~df_h["is_we"]]["amount"].mean() if (~df_h["is_we"]).any() else 0
+    if wd_avg > 0:
+        ratio = we_avg / wd_avg
+        if ratio > 1.3:
+            st.warning(f"Tu dépenses **{ratio:.1f}×** plus le week-end qu'en semaine.")
+        elif ratio < 0.7:
+            st.info(f"Tu dépenses **{ratio:.1f}×** moins le week-end qu'en semaine.")
+        else:
+            st.info("Tes dépenses sont régulières tout au long de la semaine.")
+    peak = int(by_day.idxmax())
+    st.caption(f"Jour de plus forte dépense : **{day_labels[peak]}**")
+    fig = go.Figure(go.Bar(
+        x=day_labels, y=by_day.tolist(),
+        marker_color=[theme if d >= 5 else "#E0E7FF" for d in range(7)],
+        marker_line_width=0,
+        hovertemplate="<b>%{x}</b> : %{y:.2f} €<extra></extra>",
+    ))
+    fig.update_layout(_base_layout(
+        title=dict(text="Dépenses par jour de la semaine", font_size=15, x=0.5, xanchor="center"),
+        yaxis=dict(showgrid=True, gridcolor="#F3F4F6", zeroline=False),
+        xaxis=dict(showgrid=False),
+        height=220,
+    ))
+    st.plotly_chart(fig, use_container_width=True, config=_CFG)
+    # Top heure si disponible — ici on n'a pas d'heure, donc on fait top catégorie week-end
+    if df_h["is_we"].any():
+        top_we = df_h[df_h["is_we"]].groupby("category")["amount"].sum().idxmax()
+        st.caption(f"Catégorie dominante le week-end : **{top_we}**")
+
+
+# ── Budget adaptatif ──────────────────────────────────────────────────────────
+def render_adaptive_budget() -> None:
+    months  = get_month_keys()
+    past    = [m for m in months if m != current_month_key()][:3]
+    if len(past) < 2:
+        return
+    totals  = []
+    for mk in past:
+        exps = [e for e in st.session_state.data[mk].get("expenses", [])
+                if e.get("type", "expense") == "expense"]
+        if exps:
+            totals.append(sum(float(e["amount"]) for e in exps))
+    if not totals:
+        return
+    suggested     = round(sum(totals) / len(totals) * 1.05)
+    current_budget = float(active_config()["monthly_budget"])
+    diff = suggested - current_budget
+    if abs(diff) < 20:
+        return
+    icon  = "📈" if diff > 0 else "📉"
+    color = "#F59E0B" if diff > 0 else "#22C55E"
+    st.markdown(
+        f'<div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:12px;'
+        f'padding:.75rem 1rem;margin:.4rem 0;font-size:.86rem">'
+        f'{icon} Suggestion basée sur tes 3 derniers mois : '
+        f'<strong style="color:{color}">{suggested:.0f} €</strong>'
+        f' (actuel {current_budget:.0f} €, {diff:+.0f} €)</div>',
+        unsafe_allow_html=True,
+    )
+    if st.button(f"Appliquer {suggested:.0f} €", key="apply_adaptive"):
+        active_config()["monthly_budget"] = float(suggested)
+        save_data()
+        st.rerun()
+
+
+# ── Objectifs d'épargne multiples ─────────────────────────────────────────────
+def get_savings_goals() -> list:
+    settings = st.session_state.data.get("settings", {})
+    if "savings_goals" in settings:
+        return settings["savings_goals"]
+    # Rétrocompatibilité avec l'ancienne clé unique
+    old = settings.get("savings_goal", {})
+    if old and old.get("target"):
+        return [old]
+    return []
+
+def render_savings_goals(summary: dict) -> None:
+    goals = get_savings_goals()
+    if not goals:
+        return
+    saved = max(0.0, summary["budget_remaining"])
+    theme = get_theme()
+    for g in goals:
+        target = float(g.get("target", 0))
+        label  = g.get("label", "Objectif")
+        if target <= 0:
+            continue
+        pct   = min(1.0, saved / target)
+        color = "#22C55E" if pct >= 1.0 else theme
+        st.markdown(f"""
+        <div class="budget-card" style="padding:.8rem 1rem;margin:.3rem 0">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-weight:600">🎯 {label}</span>
+                <span style="color:{color};font-weight:700">{fmt(saved)} / {fmt(target)}</span>
+            </div>
+            <div style="background:#E5E7EB;border-radius:99px;height:8px;margin:.4rem 0">
+                <div style="background:{color};width:{pct*100:.1f}%;height:8px;border-radius:99px"></div>
+            </div>
+            <p style="font-size:.75rem;color:#6B7280;margin:0">
+                {'🎉 Objectif atteint !' if pct >= 1.0 else f'{pct*100:.0f}% atteint'}</p>
+        </div>""", unsafe_allow_html=True)
+
+def _render_savings_goals_settings() -> None:
+    settings = st.session_state.data.get("settings", {})
+    goals    = get_savings_goals()
+    st.caption("Définissez plusieurs objectifs d'épargne simultanés.")
+    for i, g in enumerate(goals):
+        c1, c2 = st.columns([5, 1])
+        c1.markdown(f"**{g['label']}** — {fmt(float(g.get('target',0)))}")
+        if c2.button("✕", key=f"del_goal_{i}"):
+            goals.pop(i)
+            settings["savings_goals"] = goals
+            save_data()
+            st.rerun()
+    with st.form("add_goal_form"):
+        c1, c2 = st.columns(2)
+        glabel  = c1.text_input("Nom", placeholder="Vacances, voiture…")
+        gtarget = c2.number_input("Montant cible (€)", min_value=1.0, value=500.0, step=50.0)
+        if st.form_submit_button("➕ Ajouter", use_container_width=True) and glabel.strip():
+            goals.append({"label": glabel.strip(), "target": float(gtarget)})
+            settings["savings_goals"] = goals
+            st.session_state.data["settings"] = settings
+            save_data()
+            st.rerun()
+
+
+# ── Recherche globale ─────────────────────────────────────────────────────────
+def render_global_search() -> None:
+    query = st.text_input("🔍 Rechercher dans tous les mois",
+                          placeholder="marchand, catégorie…", key="global_q")
+    if not query or len(query) < 2:
+        return
+    q       = query.lower()
+    results = []
+    for mk in get_month_keys():
+        for e in st.session_state.data.get(mk, {}).get("expenses", []):
+            if e.get("type", "expense") != "expense":
+                continue
+            if q in e.get("description", "").lower() or q in e.get("category", "").lower():
+                results.append({**e, "Mois": month_label(mk)})
+    if not results:
+        st.info(f"Aucun résultat pour « {query} »")
+        return
+    total = sum(float(r["amount"]) for r in results)
+    st.caption(f"**{len(results)}** résultat(s) · Total : **{fmt(total)}**")
+    df_r = pd.DataFrame(results)[["date", "description", "category", "amount", "Mois"]]
+    st.dataframe(df_r.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+
+
 # ── Score de santé financière ─────────────────────────────────────────────────
 def compute_health_score(summary: dict, df: pd.DataFrame) -> dict:
     # Rythme (40 pts)
@@ -2010,8 +2253,8 @@ def render_settings_tab() -> None:
     with st.expander("🤖 Auto-catégorisation"):
         _render_auto_rules_sidebar()
 
-    with st.expander("🎯 Objectif d'épargne"):
-        _render_savings_goal_sidebar()
+    with st.expander("🎯 Objectifs d'épargne"):
+        _render_savings_goals_settings()
 
     with st.expander("🗂️ Catégories personnalisées"):
         _render_categories_sidebar()
@@ -2034,17 +2277,24 @@ def render_settings_tab() -> None:
     with st.expander("⚡ Tasker : ajout automatique depuis Revolut"):
         uname = st.session_state.username
         st.markdown(f"""
-**Tasker → Notif Revolut** — envoyez title + texte :
+**Notif Revolut → dépense auto :**
 ```
 {{"token":"caca","username":"{uname}","notif":"%evtprm2","title":"%evtprm1"}}
 ```
 URL : `https://banquetest.onrender.com/revolut`
 
-**Tasker → Raccourci manuel** :
+**Raccourci manuel (favoris Tasker) :**
 ```
 {{"token":"caca","username":"{uname}","amount":5.00,"description":"Café","category":"🍽️ Restaurant"}}
 ```
 URL : `https://banquetest.onrender.com/expense`
+
+**Résumé du soir (Tâche planifiée 21h) :**
+Action HTTP GET :
+```
+https://banquetest.onrender.com/daily-summary?token=caca&username={uname}
+```
+Réponse → champ `summary` → afficher en notification Android
 """)
         raw = _redis().get(f"last_revolut:{uname}")
         if raw:
@@ -2076,6 +2326,19 @@ def main() -> None:
     if not logged_in:
         render_auth_page()
         return
+
+    # Flash vert + vibration après ajout d'une dépense
+    if st.session_state.pop("_just_added", False):
+        components.html("""<script>
+try{
+    window.parent.navigator.vibrate&&window.parent.navigator.vibrate(50);
+    var d=window.parent.document.createElement('div');
+    d.style.cssText='position:fixed;inset:0;background:rgba(34,197,94,.18);'
+        +'z-index:9999;pointer-events:none;transition:opacity .5s';
+    window.parent.document.body.appendChild(d);
+    setTimeout(function(){d.style.opacity='0';setTimeout(function(){d.remove()},500)},120);
+}catch(e){}
+</script>""", height=0)
 
     theme_color = get_theme()
     active_key  = st.session_state.active_month
@@ -2253,6 +2516,7 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
     # ── Onglet Budget ────────────────────────────────────────────────────────
     with tab_budget:
         render_health_score(summary, df)
+        render_adaptive_budget()
         render_metrics(summary)
         st.markdown("---")
 
@@ -2272,13 +2536,15 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
             render_bank_balance_card()
             render_top_merchants(exp)
 
-        render_savings_goal(summary)
+        render_savings_goals(summary)
         st.markdown("---")
         with st.expander("💬 Puis-je me permettre ça ?"):
             render_affordability(summary)
 
     # ── Onglet Transactions ──────────────────────────────────────────────────
     with tab_tx:
+        with st.expander("🔍 Recherche globale"):
+            render_global_search()
         render_expense_table(df)
         st.markdown("---")
         render_favorites_bar()
@@ -2306,6 +2572,8 @@ section[data-testid="stSidebar"] {{ box-shadow:2px 0 12px rgba(0,0,0,0.06) !impo
             st.markdown("---")
             with st.expander("🔮 Prévision par catégorie", expanded=True):
                 render_category_forecasts(exp, summary)
+            with st.expander("🧠 Habitudes de dépense"):
+                render_spending_habits(exp)
             with st.expander("📊 Graphiques détaillés", expanded=True):
                 render_charts(exp, summary)
             with st.expander("📆 Comparaison multi-mois"):
