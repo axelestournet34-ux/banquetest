@@ -122,12 +122,12 @@ async def daily_summary(token: str = "", username: str = ""):
         raise HTTPException(status_code=401)
     raw = _r.get(f"budget:{username}")
     if not raw:
-        return {"summary": "Aucune donnée.", "total_today": 0}
+        return Response(content="Aucune donnée.", media_type="text/plain")
     data      = json.loads(raw)
     today     = date.today().isoformat()
     month_key = today[:7]
     if month_key not in data:
-        return {"summary": "Aucune dépense aujourd'hui.", "total_today": 0}
+        return Response(content="Aucune dépense aujourd'hui.", media_type="text/plain")
     expenses    = data[month_key].get("expenses", [])
     today_exps  = [e for e in expenses if e.get("date") == today and e.get("type", "expense") == "expense"]
     total_today = round(sum(float(e["amount"]) for e in today_exps), 2)
@@ -138,18 +138,12 @@ async def daily_summary(token: str = "", username: str = ""):
     days        = max(1, int(cfg.get("days_in_month", 30)))
     daily_bgt   = round(budget / days, 2)
     remaining   = round(budget - month_total, 2)
-    status      = "✅" if total_today <= daily_bgt else "⚠️"
-    desc_parts  = [f"{e.get('description','?')} {float(e['amount']):.0f}€" for e in today_exps[-3:]]
-    details     = " · ".join(desc_parts) if desc_parts else "aucune dépense"
-    summary_txt = (f"{status} Aujourd'hui : {total_today}€/{daily_bgt}€"
-                   f" · Mois : {remaining}€ restant · {details}")
-    return {
-        "summary":         summary_txt,
-        "total_today":     total_today,
-        "daily_budget":    daily_bgt,
-        "month_remaining": remaining,
-        "count_today":     len(today_exps),
-    }
+    status      = "OK" if total_today <= daily_bgt else "DEPASSE"
+    desc_parts  = [f"{e.get('description','?')} {float(e['amount']):.0f}E" for e in today_exps[-3:]]
+    details     = " | ".join(desc_parts) if desc_parts else "aucune depense"
+    txt = (f"[{status}] Aujourd'hui : {total_today}E / {daily_bgt}E"
+           f" | Mois : {remaining}E restant | {details}")
+    return Response(content=txt, media_type="text/plain; charset=utf-8")
 
 @app.get("/health")
 async def health():
