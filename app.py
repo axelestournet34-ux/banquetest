@@ -649,13 +649,92 @@ code { background: rgba(79,142,255,0.12) !important; color: var(--blue) !importa
 }
 
 /* ═══════════════════════════════════════════════
+   BOTTOM NAV MOBILE
+═══════════════════════════════════════════════ */
+.bnav {
+    display: none;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 99999;
+    background: rgba(5,9,26,0.94);
+    backdrop-filter: blur(28px) saturate(1.5);
+    -webkit-backdrop-filter: blur(28px) saturate(1.5);
+    border-top: 1px solid rgba(79,142,255,0.18);
+    padding: 0.5rem 0.75rem;
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));
+    gap: 4px;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
+}
+.bnav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 0.4rem 0.2rem;
+    cursor: pointer;
+    border-radius: 12px;
+    transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+.bnav-item:active { transform: scale(0.88); }
+.bnav-item.active { background: rgba(79,142,255,0.12); }
+.bnav-item.active::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 28px; height: 2.5px;
+    border-radius: 0 0 4px 4px;
+    background: linear-gradient(90deg,#4F8EFF,#A855F7);
+}
+.bnav-icon {
+    font-size: 1.3rem;
+    line-height: 1;
+    transition: transform 0.2s ease;
+}
+.bnav-item.active .bnav-icon { transform: scale(1.15); }
+.bnav-label {
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #64748B;
+    transition: color 0.2s ease;
+    font-family: 'Inter', sans-serif !important;
+}
+.bnav-item.active .bnav-label { color: #4F8EFF; }
+
+/* ═══════════════════════════════════════════════
    RESPONSIVE MOBILE
 ═══════════════════════════════════════════════ */
 @media screen and (max-width: 768px) {
+    .bnav { display: flex !important; }
 
     /* ─ Conteneur principal ─ */
     .main .block-container {
-        padding: 0.75rem 0.6rem 3rem !important;
+        padding: 0.75rem 0.6rem 95px !important;
+    }
+
+    /* ─ Cacher header Streamlit (hamburger) ─ */
+    [data-testid="stHeader"] {
+        display: none !important;
+    }
+
+    /* ─ Sidebar cachée sur mobile, ouvrable via JS ─ */
+    [data-testid="stSidebar"] {
+        display: none !important;
+    }
+    [data-testid="stSidebar"].mobile-open {
+        display: flex !important;
+        position: fixed !important;
+        top: 0; left: 0; bottom: 0;
+        width: 85vw !important;
+        max-width: 320px !important;
+        z-index: 99998 !important;
+        box-shadow: 4px 0 40px rgba(0,0,0,0.6) !important;
     }
 
     /* ─ Header ─ */
@@ -1464,6 +1543,106 @@ def render_charts(df: pd.DataFrame, summary: dict) -> None:
                     st.plotly_chart(fig, use_container_width=True)
 
 
+# ── Bottom navigation mobile ─────────────────────────────────────────────────
+def render_bottom_nav() -> None:
+    st.markdown("""
+<nav class="bnav" id="bnav">
+  <div class="bnav-item active" data-sec="sec-accueil">
+    <span class="bnav-icon">🏠</span>
+    <span class="bnav-label">Accueil</span>
+  </div>
+  <div class="bnav-item" data-sec="sec-ajouter">
+    <span class="bnav-icon">➕</span>
+    <span class="bnav-label">Ajouter</span>
+  </div>
+  <div class="bnav-item" data-sec="sec-historique">
+    <span class="bnav-icon">📋</span>
+    <span class="bnav-label">Historique</span>
+  </div>
+  <div class="bnav-item" data-sec="sec-stats">
+    <span class="bnav-icon">📈</span>
+    <span class="bnav-label">Stats</span>
+  </div>
+  <div class="bnav-item" data-sec="sidebar">
+    <span class="bnav-icon">⚙️</span>
+    <span class="bnav-label">Réglages</span>
+  </div>
+</nav>
+
+<div id="sidebar-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99997;backdrop-filter:blur(2px);" onclick="closeSidebar()"></div>
+
+<script>
+(function() {
+  function init() {
+    var items = document.querySelectorAll('.bnav-item[data-sec]');
+    if (!items.length) { setTimeout(init, 400); return; }
+
+    items.forEach(function(item) {
+      item.addEventListener('click', function() {
+        var sec = this.getAttribute('data-sec');
+
+        if (sec === 'sidebar') {
+          toggleSidebar(); return;
+        }
+
+        items.forEach(function(i) { i.classList.remove('active'); });
+        this.classList.add('active');
+
+        var el = document.getElementById(sec);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+
+    // Highlight active section on scroll
+    var sections = ['sec-accueil','sec-ajouter','sec-historique','sec-stats'];
+    var observer = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          var id = entry.target.id;
+          items.forEach(function(i) { i.classList.remove('active'); });
+          var active = document.querySelector('.bnav-item[data-sec="' + id + '"]');
+          if (active) active.classList.add('active');
+        }
+      });
+    }, { threshold: 0.3, rootMargin: '-50px 0px -50% 0px' });
+
+    sections.forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+  }
+
+  window.toggleSidebar = function() {
+    var sidebar = document.querySelector('[data-testid="stSidebar"]');
+    var overlay = document.getElementById('sidebar-overlay');
+    if (!sidebar) return;
+    if (sidebar.classList.contains('mobile-open')) {
+      closeSidebar();
+    } else {
+      sidebar.classList.add('mobile-open');
+      if (overlay) overlay.style.display = 'block';
+    }
+  };
+
+  window.closeSidebar = function() {
+    var sidebar = document.querySelector('[data-testid="stSidebar"]');
+    var overlay = document.getElementById('sidebar-overlay');
+    if (sidebar) sidebar.classList.remove('mobile-open');
+    if (overlay) overlay.style.display = 'none';
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else { init(); }
+  setTimeout(init, 600);
+  setTimeout(init, 1500);
+})();
+</script>
+""", unsafe_allow_html=True)
+
+
 # ── Comparaison multi-mois ────────────────────────────────────────────────────
 def render_month_comparison() -> None:
     months = get_month_keys()
@@ -1515,8 +1694,12 @@ def main() -> None:
     init_state()
     active_key = st.session_state.active_month
 
+    # ── Bottom nav mobile ──
+    render_bottom_nav()
+
     # ── Premium page header ──
     st.markdown(f"""
+<span id="sec-accueil"></span>
 <div class="page-header">
     <div class="header-badge">💶 BUDGET MENSUEL INTELLIGENT</div>
     <h1 class="gradient-title">Tableau de bord <span class="accent">{month_label(active_key)}</span></h1>
@@ -1534,6 +1717,8 @@ def main() -> None:
     render_metrics(summary)
     st.markdown("---")
 
+    # ── Ajouter une dépense + statut ──
+    st.markdown('<span id="sec-ajouter"></span>', unsafe_allow_html=True)
     col_form, col_status = st.columns([1, 1], gap="large")
     with col_form:
         render_expense_form()
@@ -1556,13 +1741,14 @@ def main() -> None:
             render_status_card(summary, df)
 
     st.markdown("---")
+    st.markdown('<span id="sec-historique"></span>', unsafe_allow_html=True)
     render_expense_table(df)
 
-    if not df.empty:
-        st.markdown("---")
-        render_charts(df, summary)
-
     st.markdown("---")
+    st.markdown('<span id="sec-stats"></span>', unsafe_allow_html=True)
+    if not df.empty:
+        render_charts(df, summary)
+        st.markdown("---")
     render_month_comparison()
 
     # Footer
