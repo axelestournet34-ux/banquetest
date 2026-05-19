@@ -1425,8 +1425,7 @@ def render_charts(df: pd.DataFrame, summary: dict) -> None:
         fig.update_layout(
             title="Progression cumulée vs rythme idéal",
             xaxis_title="Jour du mois", yaxis_title=f"Montant cumulé ({CURRENCY_SYMBOLS.get(get_currency(),'€')})",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            **plotly_layout(),
+            **plotly_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)),
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1460,8 +1459,7 @@ def render_charts(df: pd.DataFrame, summary: dict) -> None:
                     )
                     fig.update_traces(line=dict(width=2.5), marker=dict(size=7))
                     fig.update_layout(
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                        **plotly_layout(),
+                        **plotly_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02)),
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
