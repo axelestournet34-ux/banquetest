@@ -45,7 +45,7 @@ PLOTLY_COLORS = ["#4F8EFF", "#A855F7", "#22C55E", "#F59E0B", "#F43F5E",
 
 PREMIUM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;0,14..32,900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 /* ═══════════════════════════════════════════════
    VARIABLES
@@ -60,7 +60,6 @@ PREMIUM_CSS = """
     --blue:      #4F8EFF;
     --purple:    #A855F7;
     --grad:      linear-gradient(135deg,#4F8EFF,#A855F7);
-    --grad-r:    linear-gradient(135deg,#A855F7,#4F8EFF);
     --success:   #22C55E;
     --warning:   #F59E0B;
     --danger:    #F43F5E;
@@ -70,15 +69,12 @@ PREMIUM_CSS = """
     --font:      'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
     --r:         14px;
     --r-sm:      10px;
-    --r-xs:      7px;
     --trans:     0.25s cubic-bezier(0.4,0,0.2,1);
 }
 
 /* ═══════════════════════════════════════════════
-   BASE
+   BASE  — NE PAS utiliser * pour la font (casse Material Icons)
 ═══════════════════════════════════════════════ */
-html, body { font-family: var(--font) !important; }
-
 .stApp {
     background:
         radial-gradient(ellipse 90% 55% at 50% -5%, rgba(79,142,255,0.11) 0%, transparent 55%),
@@ -94,7 +90,21 @@ html, body { font-family: var(--font) !important; }
     max-width: 1380px !important;
 }
 
-* { font-family: var(--font) !important; }
+/* Cibler uniquement les éléments textuels — pas les icônes */
+h1,h2,h3,h4,h5,h6,p,li,td,th,label,input,textarea,select,button,
+.stMarkdown, [data-testid="stMarkdownContainer"],
+[data-testid="stText"], [data-testid="stCaptionContainer"],
+[data-testid="stMetricLabel"], [data-testid="stMetricValue"],
+[data-testid="stMetricDelta"], .stButton > button,
+[data-testid="stFormSubmitButton"] > button {
+    font-family: var(--font) !important;
+}
+
+/* Restaurer Material Icons pour les icônes Streamlit */
+.material-icons, [class*="material-icons"],
+[data-testid*="Icon"] span, .stIcon {
+    font-family: 'Material Icons' !important;
+}
 
 /* ═══════════════════════════════════════════════
    SIDEBAR
@@ -636,6 +646,129 @@ code { background: rgba(79,142,255,0.12) !important; color: var(--blue) !importa
     letter-spacing:0.12em;
     color:var(--text3);
     margin:1rem 0 0.35rem 0;
+}
+
+/* ═══════════════════════════════════════════════
+   RESPONSIVE MOBILE
+═══════════════════════════════════════════════ */
+@media screen and (max-width: 768px) {
+
+    /* ─ Conteneur principal ─ */
+    .main .block-container {
+        padding: 0.75rem 0.6rem 3rem !important;
+    }
+
+    /* ─ Header ─ */
+    .page-header {
+        margin-bottom: 1.2rem !important;
+        padding-bottom: 1rem !important;
+    }
+    .gradient-title {
+        font-size: 1.7rem !important;
+        letter-spacing: -0.025em !important;
+    }
+    .header-badge { font-size: 0.58rem !important; padding: 0.25rem 0.6rem !important; }
+    .header-subtitle { font-size: 0.82rem !important; }
+
+    /* ─ Métriques : scroll horizontal ─ */
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        -webkit-overflow-scrolling: touch !important;
+        padding-bottom: 0.5rem !important;
+        gap: 0.5rem !important;
+        scrollbar-width: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])::-webkit-scrollbar {
+        display: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div {
+        min-width: 130px !important;
+        flex: 0 0 130px !important;
+    }
+    [data-testid="stMetric"] {
+        padding: 0.9rem 0.75rem !important;
+    }
+    [data-testid="stMetricValue"] div { font-size: 1.15rem !important; }
+    [data-testid="stMetricLabel"] p,
+    [data-testid="stMetricLabel"] div { font-size: 0.6rem !important; }
+
+    /* ─ Autres colonnes : empilées ─ */
+    div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stMetric"])) {
+        flex-wrap: wrap !important;
+        gap: 0.5rem !important;
+    }
+    div[data-testid="stHorizontalBlock"]:not(:has([data-testid="stMetric"])) > div {
+        flex-basis: 100% !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* ─ Section headers ─ */
+    .sh { margin-bottom: 0.75rem !important; }
+    .sh-title { font-size: 0.9rem !important; }
+
+    /* ─ Quick add ─ */
+    .qa-wrap { padding: 0.75rem 0.85rem 0.5rem !important; }
+
+    /* ─ Budget card ─ */
+    .p-card { padding: 1.4rem 1rem 1rem !important; border-radius: 16px !important; }
+    .big-daily { font-size: 2.4rem !important; }
+    .b-table { font-size: 0.8rem !important; }
+    .b-table td { padding: 0.45rem 0.3rem !important; }
+
+    /* ─ Status badge ─ */
+    .sbadge { font-size: 0.74rem !important; padding: 0.38rem 0.85rem !important; }
+
+    /* ─ Formulaires ─ */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input { font-size: 1rem !important; padding: 0.6rem !important; }
+    .stButton > button,
+    [data-testid="stFormSubmitButton"] > button {
+        padding: 0.65rem 1rem !important;
+        font-size: 0.9rem !important;
+        min-height: 44px !important;
+    }
+
+    /* ─ Tables markdown ─ */
+    table { display: block !important; overflow-x: auto !important; }
+
+    /* ─ Expanders ─ */
+    [data-testid="stExpander"] summary { padding: 0.75rem 0.85rem !important; }
+
+    /* ─ Sidebar logo ─ */
+    .sidebar-logo-name { font-size: 0.92rem !important; }
+
+    /* ─ Charts ─ */
+    .js-plotly-plot { min-height: 240px !important; }
+    .js-plotly-plot .plotly { border-radius: 12px !important; }
+
+    /* ─ Cat pills ─ */
+    .cat-pill { font-size: 0.78rem !important; padding: 0.5rem 0.75rem !important; }
+
+    /* ─ Tabs ─ */
+    [data-testid="stTabs"] [role="tab"] {
+        font-size: 0.75rem !important;
+        padding: 0.42rem 0.65rem !important;
+    }
+
+    /* ─ Divider ─ */
+    hr { margin: 1.1rem 0 !important; }
+
+    /* ─ Sidebar budget card ─ */
+    [data-testid="stSidebar"] .block-container {
+        padding: 1rem 0.75rem !important;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    .gradient-title { font-size: 1.45rem !important; }
+    .big-daily { font-size: 2rem !important; }
+    div[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > div {
+        min-width: 115px !important;
+        flex: 0 0 115px !important;
+    }
+    [data-testid="stMetricValue"] div { font-size: 1rem !important; }
 }
 </style>
 """
@@ -1207,11 +1340,16 @@ def render_charts(df: pd.DataFrame, summary: dict) -> None:
             daily, x="Date", y="Montant",
             title="Dépenses journalières",
             color="Montant",
-            color_continuous_scale=[[0, "#1e3a6e"], [0.5, "#4F8EFF"], [1, "#A855F7"]],
-            text_auto=".2f",
+            color_continuous_scale=[[0, "#2563EB"], [0.5, "#4F8EFF"], [1, "#A855F7"]],
+            text_auto=".1f",
         )
-        fig.update_traces(textposition="outside", textfont=dict(color="#94A3B8", size=10))
-        fig.update_layout(**plotly_layout(coloraxis_showscale=False))
+        fig.update_traces(
+            textposition="outside",
+            textfont=dict(color="#94A3B8", size=10),
+            marker_line=dict(width=0),
+            opacity=0.92,
+        )
+        fig.update_layout(**plotly_layout(coloraxis_showscale=False, bargap=0.25))
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
@@ -1347,16 +1485,21 @@ def render_month_comparison() -> None:
     fig = go.Figure()
     fig.add_trace(go.Bar(
         name="Budget", x=df_comp["Mois"], y=df_comp["Budget"],
-        marker_color="rgba(79,142,255,0.18)",
-        marker_line=dict(color="rgba(79,142,255,0.4)", width=1),
+        marker_color="rgba(79,142,255,0.25)",
+        marker_line=dict(color="#4F8EFF", width=1.5),
     ))
     fig.add_trace(go.Bar(
         name="Dépensé", x=df_comp["Mois"], y=df_comp["Dépensé"],
-        marker=dict(color=df_comp["Dépensé"].apply(
-            lambda v: "#22C55E" if v <= df_comp["Budget"].mean() else "#F43F5E"
-        ).tolist()),
+        marker=dict(
+            color=df_comp["Dépensé"].apply(
+                lambda v: "#22C55E" if v <= df_comp["Budget"].mean() else "#F43F5E"
+            ).tolist(),
+            line=dict(width=0),
+            opacity=0.9,
+        ),
     ))
-    fig.update_layout(barmode="overlay", title="Budget vs Dépenses par mois", **plotly_layout())
+    fig.update_layout(barmode="overlay", title="Budget vs Dépenses par mois",
+                      bargap=0.3, **plotly_layout())
     st.plotly_chart(fig, use_container_width=True)
     st.dataframe(df_comp, use_container_width=True, hide_index=True)
 
