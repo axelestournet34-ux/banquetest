@@ -649,6 +649,100 @@ code { background: rgba(79,142,255,0.12) !important; color: var(--blue) !importa
 }
 
 /* ═══════════════════════════════════════════════
+   HERO HOME
+═══════════════════════════════════════════════ */
+.hero-grid {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 0.75rem;
+    margin-bottom: 1.1rem;
+}
+.hero-main {
+    grid-row: span 2;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(79,142,255,0.18);
+    border-radius: 20px;
+    padding: 1.6rem 1.3rem;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.hero-main::before {
+    content:'';
+    position:absolute;
+    inset:0; border-radius:20px; padding:1px;
+    background: var(--grad);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    opacity:0.4; pointer-events:none;
+}
+.hero-glow {
+    position:absolute; top:-60px; left:50%;
+    transform:translateX(-50%);
+    width:200px; height:100px;
+    border-radius:50%; filter:blur(35px); opacity:0.12; pointer-events:none;
+}
+.hero-label {
+    font-size:0.66rem; font-weight:800; text-transform:uppercase;
+    letter-spacing:0.1em; color:var(--text3); margin-bottom:0.45rem;
+}
+.hero-amount {
+    font-size:2.6rem; font-weight:900;
+    letter-spacing:-0.04em; line-height:1.0;
+    margin-bottom:0.3rem;
+}
+.hero-sub { font-size:0.82rem; color:var(--text2); margin-bottom:0.9rem; }
+.hero-card-sm {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(79,142,255,0.1);
+    border-radius: 14px;
+    padding: 0.9rem 1rem;
+    display: flex; flex-direction: column; justify-content: center;
+}
+.hero-label-sm {
+    font-size:0.6rem; font-weight:800; text-transform:uppercase;
+    letter-spacing:0.1em; color:var(--text3); margin-bottom:0.2rem;
+}
+.hero-val { font-size:1.2rem; font-weight:800; letter-spacing:-0.025em; color:var(--text); }
+.hero-val-sub { font-size:0.7rem; color:var(--text3); margin-top:0.12rem; }
+
+/* ═══════════════════════════════════════════════
+   TRANSACTIONS RÉCENTES
+═══════════════════════════════════════════════ */
+.txn-list {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(79,142,255,0.1);
+    border-radius: 14px;
+    overflow: hidden;
+}
+.txn-row {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(79,142,255,0.07);
+    transition: background 0.15s ease;
+}
+.txn-row:last-child { border-bottom: none; }
+.txn-row:hover { background: rgba(79,142,255,0.05); }
+.txn-dot {
+    width:8px; height:8px; border-radius:50%;
+    background: var(--grad); flex-shrink:0;
+}
+.txn-info { flex:1; min-width:0; }
+.txn-desc {
+    font-size:0.85rem; font-weight:600; color:var(--text) !important;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.txn-meta { font-size:0.7rem; color:var(--text3) !important; margin-top:0.08rem; }
+.txn-amount { font-size:0.88rem; font-weight:700; color:#F43F5E !important; flex-shrink:0; }
+.txn-empty {
+    text-align:center; padding:1.5rem 1rem;
+    color:var(--text3); font-size:0.85rem;
+}
+
+/* ═══════════════════════════════════════════════
    BOTTOM NAV MOBILE
 ═══════════════════════════════════════════════ */
 .bnav {
@@ -1543,6 +1637,64 @@ def render_charts(df: pd.DataFrame, summary: dict) -> None:
                     st.plotly_chart(fig, use_container_width=True)
 
 
+# ── Hero accueil ─────────────────────────────────────────────────────────────
+def render_home_hero(summary: dict, df: pd.DataFrame) -> None:
+    status, msg = get_status(summary["difference"])
+    color_map = {"green": "#22C55E", "orange": "#F59E0B", "red": "#F43F5E"}
+    icon_map  = {"green": "✅", "orange": "⚠️", "red": "🔴"}
+    color      = color_map[status]
+    budget_pct = min(summary["total_spent"] / summary["budget"] * 100 if summary["budget"] > 0 else 0, 100)
+    forecast_ok = summary["forecast_total"] <= summary["budget"]
+
+    st.markdown(f"""
+<div class="hero-grid">
+  <div class="hero-main">
+    <div class="hero-glow" style="background:{color};"></div>
+    <div class="hero-label">Budget quotidien restant</div>
+    <div class="hero-amount" style="color:{color};">{fmt(summary['daily_remaining'])}</div>
+    <div class="hero-sub">{icon_map[status]} {summary['days_remaining']} jours restants</div>
+    <div class="prog-bar">
+      <div class="prog-fill" style="width:{budget_pct:.1f}%;background:{color};"></div>
+    </div>
+    <div style="font-size:0.68rem;color:var(--text3);margin-top:0.3rem;">{budget_pct:.1f}% du budget utilisé · <span style="color:var(--text2);">{msg}</span></div>
+  </div>
+  <div class="hero-card-sm">
+    <div class="hero-label-sm">Dépensé</div>
+    <div class="hero-val">{fmt(summary['total_spent'])}</div>
+    <div class="hero-val-sub">sur {fmt(summary['budget'])}</div>
+  </div>
+  <div class="hero-card-sm">
+    <div class="hero-label-sm">Prévision fin mois</div>
+    <div class="hero-val" style="color:{'#22C55E' if forecast_ok else '#F43F5E'};">{fmt(summary['forecast_total'])}</div>
+    <div class="hero-val-sub">{'✅ Dans le budget' if forecast_ok else '⚠️ Dépassement prévu'}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+def render_recent_transactions(df: pd.DataFrame, n: int = 5) -> None:
+    st.markdown('<div class="sh"><span class="sh-title">🕐 Dernières dépenses</span><div class="sh-line"></div></div>', unsafe_allow_html=True)
+    if df.empty:
+        st.markdown('<div class="txn-empty">Aucune dépense — ajoutez-en une ci-dessus !</div>', unsafe_allow_html=True)
+        return
+    recent = df.copy()
+    recent["date"] = pd.to_datetime(recent["date"])
+    recent = recent.sort_values("date", ascending=False).head(n)
+    rows = ""
+    for _, row in recent.iterrows():
+        d = row["date"].strftime("%d %b")
+        rows += f"""
+<div class="txn-row">
+  <div class="txn-dot"></div>
+  <div class="txn-info">
+    <div class="txn-desc">{row['description']}</div>
+    <div class="txn-meta">{row['category']} · {d}</div>
+  </div>
+  <div class="txn-amount">−{fmt(row['amount'])}</div>
+</div>"""
+    st.markdown(f'<div class="txn-list">{rows}</div>', unsafe_allow_html=True)
+
+
 # ── Bottom navigation mobile ─────────────────────────────────────────────────
 def render_bottom_nav() -> None:
     st.markdown("""
@@ -1697,7 +1849,9 @@ def main() -> None:
     # ── Bottom nav mobile ──
     render_bottom_nav()
 
-    # ── Premium page header ──
+    # ════════════════════════════════════════
+    # ACCUEIL
+    # ════════════════════════════════════════
     st.markdown(f"""
 <span id="sec-accueil"></span>
 <div class="page-header">
@@ -1708,42 +1862,54 @@ def main() -> None:
 """, unsafe_allow_html=True)
 
     render_sidebar()
-    render_quick_add()
-    st.markdown("---")
 
     df      = build_df()
     summary = compute_summary(active_config(), df)
 
-    render_metrics(summary)
-    st.markdown("---")
+    if df.empty:
+        cfg     = active_config()
+        daily_v = cfg["monthly_budget"] / cfg["days_in_month"] if cfg["days_in_month"] > 0 else 0
+        st.markdown(f"""
+<div class="p-card" style="margin-bottom:1rem;">
+    <div class="p-card-glow" style="background:#22C55E;"></div>
+    <p class="p-card-label">Budget quotidien de départ</p>
+    <p class="big-daily" style="color:#22C55E;">{fmt(daily_v)}</p>
+    <p class="p-card-sub">sur <strong>{cfg['days_in_month']}</strong> jours · {fmt(cfg['monthly_budget'])} ce mois</p>
+</div>
+""", unsafe_allow_html=True)
+        st.info("Aucune dépense pour l'instant — ajoutez-en une ci-dessous !")
+    else:
+        render_home_hero(summary, df)
 
-    # ── Ajouter une dépense + statut ──
+    render_quick_add()
+    render_recent_transactions(df)
+
+    # ════════════════════════════════════════
+    # AJOUTER
+    # ════════════════════════════════════════
+    st.markdown("---")
     st.markdown('<span id="sec-ajouter"></span>', unsafe_allow_html=True)
     col_form, col_status = st.columns([1, 1], gap="large")
     with col_form:
         render_expense_form()
         render_csv_import()
     with col_status:
-        if df.empty:
-            st.markdown('<div class="sh"><span class="sh-title">📊 État du budget</span><div class="sh-line"></div></div>', unsafe_allow_html=True)
-            st.info("Ajoutez vos premières dépenses pour voir l'état de votre budget en temps réel.")
-            cfg = active_config()
-            daily_v = cfg["monthly_budget"] / cfg["days_in_month"] if cfg["days_in_month"] > 0 else 0
-            st.markdown(f"""
-<div class="p-card">
-    <div class="p-card-glow" style="background:#22C55E;"></div>
-    <p class="p-card-label">Budget quotidien de départ</p>
-    <p class="big-daily" style="color:#22C55E;">{fmt(daily_v)}</p>
-    <p class="p-card-sub">sur <strong>{cfg['days_in_month']}</strong> jours</p>
-</div>
-""", unsafe_allow_html=True)
-        else:
+        if not df.empty:
             render_status_card(summary, df)
+        else:
+            st.markdown('<div class="sh"><span class="sh-title">📊 Statut budget</span><div class="sh-line"></div></div>', unsafe_allow_html=True)
+            st.info("Le statut apparaîtra dès que vous aurez des dépenses.")
 
+    # ════════════════════════════════════════
+    # HISTORIQUE
+    # ════════════════════════════════════════
     st.markdown("---")
     st.markdown('<span id="sec-historique"></span>', unsafe_allow_html=True)
     render_expense_table(df)
 
+    # ════════════════════════════════════════
+    # STATS
+    # ════════════════════════════════════════
     st.markdown("---")
     st.markdown('<span id="sec-stats"></span>', unsafe_allow_html=True)
     if not df.empty:
